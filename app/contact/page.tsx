@@ -1,23 +1,23 @@
 import Head from "next/head";
-import { useState } from "react";
+import { useRef } from "react";
 
 export default function Contact() {
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    message: "",
-  });
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setFormData((prevData) => ({ ...prevData, [name]: value }));
-  };
+  const formRef = useRef<HTMLFormElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log("Form submitted:", formData);
+
+    const formData = new FormData(formRef.current!);
+    const data = {
+      name: formData.get("name") as string,
+      email: formData.get("email") as string,
+      message: formData.get("message") as string,
+    };
+
+    console.log("Form submitted:", data);
     alert("Thank you for contacting us! We will get back to you soon.");
-    setFormData({ name: "", email: "", message: "" });
+
+    formRef.current?.reset(); // Reset the form after submission
   };
 
   return (
@@ -33,14 +33,12 @@ export default function Contact() {
           Have questions or feedback? Reach out to us using the form below.
         </p>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700">Name</label>
             <input
               type="text"
               name="name"
-              value={formData.name}
-              onChange={handleChange}
               required
               className="mt-1 block w-full border rounded-md p-2"
             />
@@ -50,8 +48,6 @@ export default function Contact() {
             <input
               type="email"
               name="email"
-              value={formData.email}
-              onChange={handleChange}
               required
               className="mt-1 block w-full border rounded-md p-2"
             />
@@ -60,8 +56,6 @@ export default function Contact() {
             <label className="block text-sm font-medium text-gray-700">Message</label>
             <textarea
               name="message"
-              value={formData.message}
-              onChange={handleChange}
               required
               className="mt-1 block w-full border rounded-md p-2"
               rows={4}

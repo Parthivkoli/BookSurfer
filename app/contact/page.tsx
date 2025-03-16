@@ -1,3 +1,5 @@
+"use client"; // Added this at the very top
+
 import Head from "next/head";
 import { useRef } from "react";
 

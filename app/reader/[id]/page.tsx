@@ -2,11 +2,18 @@ import { getBookById, getBookContent } from "@/lib/api/books";
 import ReaderClient from "./ReaderClient";
 import { Book } from "@/types/book";
 
-export default async function ReaderPage({ params }: { params: { id: string } }) {
-  const bookId = params.id;
+// Define the props type to match Next.js's expectation
+interface PageProps {
+  params: Promise<{ id: string }>;
+}
+
+export default async function ReaderPage({ params }: PageProps) {
+  // Await the params Promise to get the resolved { id: string }
+  const resolvedParams = await params;
+  const bookId = resolvedParams.id;
 
   // Fetch initial data for the book
-  async function fetchInitialData() {
+  async function fetchInitialData(): Promise<{ book: Book | null; content: string | null }> {
     try {
       // Fetch book metadata
       const book = await getBookById(bookId);

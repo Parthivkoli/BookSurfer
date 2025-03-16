@@ -7,7 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BookOpen, Search, Filter, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { searchBooks } from "@/lib/api/books";
+import { searchBooks } from "@/lib/api/books"; // Books API
+import { searchArxiv } from "@/lib/api/arxiv"; // Research Papers (arXiv)
+import { searchSemanticscholar } from "@/lib/api/semanticscholar"; // Research Papers (Semantic Scholar)
+import { searchLnmtl } from "@/lib/api/lnmtl"; // Light Novels (LNMTL)
+import { searchRoyalroad } from "@/lib/api/royalroad"; // Light Novels (Royal Road)
+import { searchWebnovel } from "@/lib/api/webnovel"; // Light Novels (Webnovel)
 import { Book, BookSearchParams } from "@/types/book";
 import {
   Select,
@@ -28,29 +33,122 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 
-// Placeholder API functions (to be implemented elsewhere)
-const searchPapers = async (query: string): Promise<Book[]> => {
+// Define all possible source types
+type SourceType =
+  | "openlibrary"
+  | "gutenberg"
+  | "google"
+  | "internetarchive"
+  | "librivox"
+  | "feedbooks"
+  | "arxiv"
+  | "semanticscholar"
+  | "lnmtl"
+  | "royalroad"
+  | "webnovel";
+
+// Placeholder API functions (replace with actual implementations)
+const searchArxiv = async (params: { query: string }): Promise<Book[]> => {
+  // Replace with actual arxiv.ts implementation
   return [
     {
-      id: "paper1",
-      title: "Sample Research Paper",
+      id: "arxiv1",
+      title: "Sample arXiv Paper",
       authors: ["Author A"],
       source: "arxiv",
-      abstract: "This is a sample abstract.",
+      abstract: "Sample abstract from arXiv.",
       rating: 0,
+      description: "",
+      publishedDate: "",
+      categories: [],
+      language: ["en"],
+      pageCount: 0,
+      coverImage: null,
+      downloadUrl: null,
     },
   ];
 };
 
-const searchNovels = async (query: string): Promise<Book[]> => {
+const searchSemanticscholar = async (params: { query: string }): Promise<Book[]> => {
+  // Replace with actual semanticscholar.ts implementation
   return [
     {
-      id: "novel1",
-      title: "Sample Light Novel",
+      id: "semanticscholar1",
+      title: "Sample Semantic Scholar Paper",
       authors: ["Author B"],
-      source: "royalroad",
-      description: "A thrilling adventure.",
+      source: "semanticscholar",
+      abstract: "Sample abstract from Semantic Scholar.",
+      rating: 0,
+      description: "",
+      publishedDate: "",
+      categories: [],
+      language: ["en"],
+      pageCount: 0,
+      coverImage: null,
+      downloadUrl: null,
+    },
+  ];
+};
+
+const searchLnmtl = async (params: { query: string }): Promise<Book[]> => {
+  // Replace with actual inmtl.ts implementation
+  return [
+    {
+      id: "lnmtl1",
+      title: "Sample LNMTL Novel",
+      authors: ["Author C"],
+      source: "lnmtl",
+      description: "A thrilling LNMTL adventure.",
       rating: 4.5,
+      abstract: "",
+      publishedDate: "",
+      categories: [],
+      language: ["en"],
+      pageCount: 0,
+      coverImage: null,
+      downloadUrl: null,
+    },
+  ];
+};
+
+const searchRoyalroad = async (params: { query: string }): Promise<Book[]> => {
+  // Replace with actual royalroad.ts implementation
+  return [
+    {
+      id: "royalroad1",
+      title: "Sample Royal Road Novel",
+      authors: ["Author D"],
+      source: "royalroad",
+      description: "A Royal Road epic.",
+      rating: 4.7,
+      abstract: "",
+      publishedDate: "",
+      categories: [],
+      language: ["en"],
+      pageCount: 0,
+      coverImage: null,
+      downloadUrl: null,
+    },
+  ];
+};
+
+const searchWebnovel = async (params: { query: string }): Promise<Book[]> => {
+  // Replace with actual webnovel.ts implementation
+  return [
+    {
+      id: "webnovel1",
+      title: "Sample Webnovel",
+      authors: ["Author E"],
+      source: "webnovel",
+      description: "A Webnovel masterpiece.",
+      rating: 4.8,
+      abstract: "",
+      publishedDate: "",
+      categories: [],
+      language: ["en"],
+      pageCount: 0,
+      coverImage: null,
+      downloadUrl: null,
     },
   ];
 };
@@ -63,10 +161,18 @@ export default function DiscoverPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [activeTab, setActiveTab] = useState("all");
   const [contentType, setContentType] = useState<"books" | "papers" | "novels">("books");
-  const [sources, setSources] = useState<("openlibrary" | "gutenberg" | "google")[]>([
+  const [sources, setSources] = useState<SourceType[]>([
     "openlibrary",
     "gutenberg",
     "google",
+    "internetarchive",
+    "librivox",
+    "feedbooks",
+    "arxiv",
+    "semanticscholar",
+    "lnmtl",
+    "royalroad",
+    "webnovel",
   ]);
   const [languages, setLanguages] = useState<string[]>([]);
   const [sortBy, setSortBy] = useState("relevance");
@@ -78,36 +184,61 @@ export default function DiscoverPage() {
     const fetchResults = async () => {
       setLoading(true);
       try {
-        if (contentType === "books") {
-          const params: BookSearchParams = {
-            query: searchQuery,
-            page: currentPage,
-            limit: booksPerPage,
-            sources,
-          };
-          if (activeTab !== "all") params.subject = activeTab;
-          if (languages.length > 0) params.languages = languages;
+        let allResults: Book[] = [];
+        let totalItems = 0;
 
-          const result = await searchBooks(params);
-          let sortedBooks = [...result.books];
-          if (sortBy === "title") {
-            sortedBooks.sort((a, b) => a.title.localeCompare(b.title));
-          } else if (sortBy === "date") {
-            sortedBooks.sort((a, b) => b.publishedDate!.localeCompare(a.publishedDate!));
-          } else if (sortBy === "rating") {
-            sortedBooks.sort((a, b) => b.rating - a.rating);
+        if (contentType === "books") {
+          const bookSources = sources.filter((s) =>
+            ["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"].includes(s)
+          ) as BookSearchParams["sources"];
+          if (bookSources.length > 0) {
+            const params: BookSearchParams = {
+              query: searchQuery,
+              page: currentPage,
+              limit: booksPerPage,
+              sources: bookSources,
+            };
+            if (activeTab !== "all") params.subject = activeTab;
+            if (languages.length > 0) params.languages = languages;
+
+            const result = await searchBooks(params);
+            allResults = result.books;
+            totalItems = result.totalItems;
           }
-          setResults(sortedBooks);
-          setTotalPages(Math.ceil(result.totalItems / booksPerPage) || 1);
         } else if (contentType === "papers") {
-          const papers = await searchPapers(searchQuery);
-          setResults(papers);
-          setTotalPages(Math.ceil(papers.length / booksPerPage) || 1);
+          const paperSources = sources.filter((s) => ["arxiv", "semanticscholar"].includes(s));
+          const paperPromises = paperSources.map((source) => {
+            const params = { query: searchQuery };
+            return source === "arxiv" ? searchArxiv(params) : searchSemanticscholar(params);
+          });
+          const paperResults = await Promise.all(paperPromises);
+          allResults = paperResults.flat();
+          totalItems = allResults.length;
         } else if (contentType === "novels") {
-          const novels = await searchNovels(searchQuery);
-          setResults(novels);
-          setTotalPages(Math.ceil(novels.length / booksPerPage) || 1);
+          const novelSources = sources.filter((s) => ["lnmtl", "royalroad", "webnovel"].includes(s));
+          const novelPromises = novelSources.map((source) => {
+            const params = { query: searchQuery };
+            if (source === "lnmtl") return searchLnmtl(params);
+            if (source === "royalroad") return searchRoyalroad(params);
+            return searchWebnovel(params);
+          });
+          const novelResults = await Promise.all(novelPromises);
+          allResults = novelResults.flat();
+          totalItems = allResults.length;
         }
+
+        // Sorting
+        let sortedResults = [...allResults];
+        if (sortBy === "title") {
+          sortedResults.sort((a, b) => a.title.localeCompare(b.title));
+        } else if (sortBy === "date") {
+          sortedResults.sort((a, b) => (b.publishedDate ?? "").localeCompare(a.publishedDate ?? ""));
+        } else if (sortBy === "rating") {
+          sortedResults.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+        }
+
+        setResults(sortedResults);
+        setTotalPages(Math.ceil(totalItems / booksPerPage) || 1);
       } catch (error) {
         console.error(`Error fetching ${contentType}:`, error);
         setResults([]);
@@ -126,7 +257,7 @@ export default function DiscoverPage() {
   };
 
   // Handle source filter changes
-  const handleSourceChange = (source: "openlibrary" | "gutenberg" | "google", checked: boolean) => {
+  const handleSourceChange = (source: SourceType, checked: boolean) => {
     setSources((prev) => (checked ? [...prev, source] : prev.filter((s) => s !== source)));
     setCurrentPage(1);
   };
@@ -146,7 +277,7 @@ export default function DiscoverPage() {
       <div className="flex-1 max-w-7xl mx-auto py-8 px-4 md:px-6">
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold">Discover</h1>
-          <Select value={contentType} onValueChange={setContentType}>
+          <Select value={contentType} onValueChange={(value) => setContentType(value as "books" | "papers" | "novels")}>
             <SelectTrigger className="w-[180px]">
               <SelectValue placeholder="Content Type" />
             </SelectTrigger>
@@ -159,49 +290,86 @@ export default function DiscoverPage() {
         </div>
 
         {/* Filters and Tabs */}
-        {contentType === "books" && (
-          <>
-            <div className="flex items-center gap-2 mb-6">
-              <Select value={sortBy} onValueChange={setSortBy}>
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue placeholder="Sort by" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="relevance">Relevance</SelectItem>
-                  <SelectItem value="title">Title</SelectItem>
-                  <SelectItem value="date">Publication Date</SelectItem>
-                  <SelectItem value="rating">Rating</SelectItem>
-                </SelectContent>
-              </Select>
-              <Sheet>
-                <SheetTrigger asChild>
-                  <Button variant="outline" size="icon">
-                    <Filter className="h-4 w-4" />
-                  </Button>
-                </SheetTrigger>
-                <SheetContent>
-                  <SheetHeader>
-                    <SheetTitle>Filter Books</SheetTitle>
-                    <SheetDescription>Refine your book search with these filters</SheetDescription>
-                  </SheetHeader>
-                  <div className="py-4">
-                    <h3 className="font-medium mb-2">Sources</h3>
-                    <div className="space-y-2">
-                      {["openlibrary", "gutenberg", "google"].map((source) => (
+        <div className="flex items-center gap-2 mb-6">
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="relevance">Relevance</SelectItem>
+              <SelectItem value="title">Title</SelectItem>
+              <SelectItem value="date">Publication Date</SelectItem>
+              <SelectItem value="rating">Rating</SelectItem>
+            </SelectContent>
+          </Select>
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon">
+                <Filter className="h-4 w-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Filter {contentType.charAt(0).toUpperCase() + contentType.slice(1)}</SheetTitle>
+                <SheetDescription>Refine your search with these filters</SheetDescription>
+              </SheetHeader>
+              <div className="py-4">
+                <h3 className="font-medium mb-2">Sources</h3>
+                <div className="space-y-2">
+                  {contentType === "books" &&
+                    (["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"] as const).map(
+                      (source) => (
                         <div key={source} className="flex items-center space-x-2">
                           <Checkbox
                             id={`source-${source}`}
-                            checked={sources.includes(source as "openlibrary" | "gutenberg" | "google")}
-                            onCheckedChange={(checked) =>
-                              handleSourceChange(source as "openlibrary" | "gutenberg" | "google", checked as boolean)
-                            }
+                            checked={sources.includes(source)}
+                            onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
                           />
                           <Label htmlFor={`source-${source}`}>
-                            {source === "openlibrary" ? "Open Library" : source === "gutenberg" ? "Project Gutenberg" : "Google Books"}
+                            {source === "openlibrary"
+                              ? "Open Library"
+                              : source === "gutenberg"
+                              ? "Project Gutenberg"
+                              : source === "google"
+                              ? "Google Books"
+                              : source === "internetarchive"
+                              ? "Internet Archive"
+                              : source === "librivox"
+                              ? "LibriVox"
+                              : "Feedbooks"}
                           </Label>
                         </div>
-                      ))}
-                    </div>
+                      )
+                    )}
+                  {contentType === "papers" &&
+                    (["arxiv", "semanticscholar"] as const).map((source) => (
+                      <div key={source} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`source-${source}`}
+                          checked={sources.includes(source)}
+                          onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
+                        />
+                        <Label htmlFor={`source-${source}`}>
+                          {source === "arxiv" ? "arXiv" : "Semantic Scholar"}
+                        </Label>
+                      </div>
+                    ))}
+                  {contentType === "novels" &&
+                    (["lnmtl", "royalroad", "webnovel"] as const).map((source) => (
+                      <div key={source} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`source-${source}`}
+                          checked={sources.includes(source)}
+                          onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
+                        />
+                        <Label htmlFor={`source-${source}`}>
+                          {source === "lnmtl" ? "LNMTL" : source === "royalroad" ? "Royal Road" : "Webnovel"}
+                        </Label>
+                      </div>
+                    ))}
+                </div>
+                {contentType === "books" && (
+                  <>
                     <Separator className="my-4" />
                     <h3 className="font-medium mb-2">Languages</h3>
                     <div className="space-y-2">
@@ -218,30 +386,40 @@ export default function DiscoverPage() {
                         </div>
                       ))}
                     </div>
-                  </div>
-                  <div className="flex justify-end">
-                    <Button
-                      onClick={() => {
-                        setSources(["openlibrary", "gutenberg", "google"]);
-                        setLanguages([]);
-                      }}
-                    >
-                      Reset Filters
-                    </Button>
-                  </div>
-                </SheetContent>
-              </Sheet>
-            </div>
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
-              <TabsList className="grid grid-cols-5 sm:w-[600px]">
-                <TabsTrigger value="all">All</TabsTrigger>
-                <TabsTrigger value="fiction">Fiction</TabsTrigger>
-                <TabsTrigger value="nonfiction">Non-Fiction</TabsTrigger>
-                <TabsTrigger value="science">Science</TabsTrigger>
-                <TabsTrigger value="history">History</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </>
+                  </>
+                )}
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => {
+                    setSources(
+                      contentType === "books"
+                        ? ["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"]
+                        : contentType === "papers"
+                        ? ["arxiv", "semanticscholar"]
+                        : ["lnmtl", "royalroad", "webnovel"]
+                    );
+                    setLanguages([]);
+                  }}
+                >
+                  Reset Filters
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        {/* Tabs for Books Only */}
+        {contentType === "books" && (
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
+            <TabsList className="grid grid-cols-5 sm:w-[600px]">
+              <TabsTrigger value="all">All</TabsTrigger>
+              <TabsTrigger value="fiction">Fiction</TabsTrigger>
+              <TabsTrigger value="nonfiction">Non-Fiction</TabsTrigger>
+              <TabsTrigger value="science">Science</TabsTrigger>
+              <TabsTrigger value="history">History</TabsTrigger>
+            </TabsList>
+          </Tabs>
         )}
 
         {/* Search Bar */}
@@ -324,8 +502,10 @@ function BookCard({ book }: { book: Book }) {
       case "openlibrary": return "Open Library";
       case "gutenberg": return "Gutenberg";
       case "google": return "Google Books";
+      case "internetarchive": return "Internet Archive";
+      case "librivox": return "LibriVox";
+      case "feedbooks": return "Feedbooks";
       case "arxiv": return "arXiv";
-      case "core": return "CORE";
       case "semanticscholar": return "Semantic Scholar";
       case "lnmtl": return "LNMTL";
       case "royalroad": return "Royal Road";
@@ -355,17 +535,17 @@ function BookCard({ book }: { book: Book }) {
         <p className="text-sm text-muted-foreground mb-2 line-clamp-1">
           {book.authors.length > 0 ? book.authors.join(", ") : "Unknown Author"}
         </p>
-        {book.source === "arxiv" || book.source === "core" || book.source === "semanticscholar" ? (
+        {["arxiv", "semanticscholar"].includes(book.source) ? (
           <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
             {book.abstract || "No abstract available"}
           </p>
-        ) : book.source === "lnmtl" || book.source === "royalroad" || book.source === "webnovel" ? (
+        ) : ["lnmtl", "royalroad", "webnovel"].includes(book.source) ? (
           <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
             {book.description || "No description available"}
           </p>
         ) : (
           <div className="flex justify-between items-center">
-            <span className="text-sm">{book.rating > 0 ? `${book.rating.toFixed(1)} ★` : "No rating"}</span>
+            <span className="text-sm">{book.rating && book.rating > 0 ? `${book.rating.toFixed(1)} ★` : "No rating"}</span>
           </div>
         )}
         <Button variant="ghost" size="sm" asChild>

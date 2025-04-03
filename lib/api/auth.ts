@@ -89,22 +89,32 @@ export function logoutUser(): void {
  * Get current user
  */
 export function getCurrentUser(): { id: string; email: string; name: string } | null {
-  // Check localStorage first (for page refreshes)
-  const storedUser = localStorage.getItem("user");
-  
-  if (storedUser) {
-    return JSON.parse(storedUser);
+  try {
+    // Check localStorage first (for page refreshes)
+    const storedUser = localStorage.getItem("user");
+    
+    if (storedUser) {
+      const parsedUser = JSON.parse(storedUser);
+      if (parsedUser && typeof parsedUser === 'object' && 
+          'id' in parsedUser && 'email' in parsedUser && 'name' in parsedUser) {
+        return parsedUser;
+      }
+    }
+    
+    if (currentUser && typeof currentUser === 'object' && 
+        'id' in currentUser && 'email' in currentUser && 'name' in currentUser) {
+      return {
+        id: currentUser.id,
+        email: currentUser.email,
+        name: currentUser.name,
+      };
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting current user:', error);
+    return null;
   }
-  
-  if (currentUser) {
-    return {
-      id: currentUser.id,
-      email: currentUser.email,
-      name: currentUser.name,
-    };
-  }
-  
-  return null;
 }
 
 /**

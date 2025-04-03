@@ -2,7 +2,8 @@
 export interface Book {
   id: string;
   title: string;
-  authors: string[];
+  authors?: string[];
+  author?: string;
   coverImage?: string;
   description?: string;
   abstract?: string; // For research papers
@@ -14,6 +15,9 @@ export interface Book {
     | "openlibrary"
     | "gutenberg"
     | "google"
+    | "internetarchive"
+    | "librivox"
+    | "feedbooks"
     | "arxiv"
     | "core"
     | "semanticscholar"
@@ -36,6 +40,7 @@ export interface BookSearchParams {
   subject?: string;              // Subject filter (e.g., "fiction" for Open Library)
   languages?: string[];          // Language filter (e.g., ["en", "fr"])
   sources?: ("openlibrary" | "gutenberg" | "google")[]; // Optional source filter
+  sort?: "rating" | "relevance" | "date";  // Sort criteria (default: relevance)
 }
 
 /**

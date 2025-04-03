@@ -9,10 +9,10 @@ import { BookOpen, Search, Filter, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { searchBooks } from "@/lib/api/books"; // Books API
 import { searchArxiv } from "@/lib/api/arxiv"; // Research Papers (arXiv)
-import { searchSemanticscholar } from "@/lib/api/semanticscholar"; // Research Papers (Semantic Scholar)
-import { searchLnmtl } from "@/lib/api/lnmtl"; // Light Novels (LNMTL)
-import { searchRoyalroad } from "@/lib/api/royalroad"; // Light Novels (Royal Road)
-import { searchWebnovel } from "@/lib/api/webnovel"; // Light Novels (Webnovel)
+import { searchSemanticScholar } from "@/lib/api/semanticscholar"; // Research Papers (Semantic Scholar)
+import { searchLNMTL } from "@/lib/api/lnmtl"; // Light Novels (LNMTL)
+import { searchRoyalRoad } from "@/lib/api/royalroad"; // Light Novels (Royal Road)
+import { scrapeWebnovel } from "@/lib/api/webnovel"; // Light Novels (Webnovel)
 import { Book, BookSearchParams } from "@/types/book";
 import {
   Select,
@@ -47,115 +47,14 @@ type SourceType =
   | "royalroad"
   | "webnovel";
 
-// Placeholder API functions (replace with actual implementations)
-const searchArxiv = async (params: { query: string }): Promise<Book[]> => {
-  // Replace with actual arxiv.ts implementation
-  return [
-    {
-      id: "arxiv1",
-      title: "Sample arXiv Paper",
-      authors: ["Author A"],
-      source: "arxiv",
-      abstract: "Sample abstract from arXiv.",
-      rating: 0,
-      description: "",
-      publishedDate: "",
-      categories: [],
-      language: ["en"],
-      pageCount: 0,
-      coverImage: null,
-      downloadUrl: null,
-    },
-  ];
-};
-
-const searchSemanticscholar = async (params: { query: string }): Promise<Book[]> => {
-  // Replace with actual semanticscholar.ts implementation
-  return [
-    {
-      id: "semanticscholar1",
-      title: "Sample Semantic Scholar Paper",
-      authors: ["Author B"],
-      source: "semanticscholar",
-      abstract: "Sample abstract from Semantic Scholar.",
-      rating: 0,
-      description: "",
-      publishedDate: "",
-      categories: [],
-      language: ["en"],
-      pageCount: 0,
-      coverImage: null,
-      downloadUrl: null,
-    },
-  ];
-};
-
-const searchLnmtl = async (params: { query: string }): Promise<Book[]> => {
-  // Replace with actual inmtl.ts implementation
-  return [
-    {
-      id: "lnmtl1",
-      title: "Sample LNMTL Novel",
-      authors: ["Author C"],
-      source: "lnmtl",
-      description: "A thrilling LNMTL adventure.",
-      rating: 4.5,
-      abstract: "",
-      publishedDate: "",
-      categories: [],
-      language: ["en"],
-      pageCount: 0,
-      coverImage: null,
-      downloadUrl: null,
-    },
-  ];
-};
-
-const searchRoyalroad = async (params: { query: string }): Promise<Book[]> => {
-  // Replace with actual royalroad.ts implementation
-  return [
-    {
-      id: "royalroad1",
-      title: "Sample Royal Road Novel",
-      authors: ["Author D"],
-      source: "royalroad",
-      description: "A Royal Road epic.",
-      rating: 4.7,
-      abstract: "",
-      publishedDate: "",
-      categories: [],
-      language: ["en"],
-      pageCount: 0,
-      coverImage: null,
-      downloadUrl: null,
-    },
-  ];
-};
-
-const searchWebnovel = async (params: { query: string }): Promise<Book[]> => {
-  // Replace with actual webnovel.ts implementation
-  return [
-    {
-      id: "webnovel1",
-      title: "Sample Webnovel",
-      authors: ["Author E"],
-      source: "webnovel",
-      description: "A Webnovel masterpiece.",
-      rating: 4.8,
-      abstract: "",
-      publishedDate: "",
-      categories: [],
-      language: ["en"],
-      pageCount: 0,
-      coverImage: null,
-      downloadUrl: null,
-    },
-  ];
-};
+// Extend Book type to include optional abstract for papers
+interface ExtendedBook extends Book {
+  abstract?: string;
+}
 
 export default function DiscoverPage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [results, setResults] = useState<Book[]>([]);
+  const [results, setResults] = useState<ExtendedBook[]>([]);
   const [loading, setLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -184,14 +83,14 @@ export default function DiscoverPage() {
     const fetchResults = async () => {
       setLoading(true);
       try {
-        let allResults: Book[] = [];
+        let allResults: ExtendedBook[] = [];
         let totalItems = 0;
 
         if (contentType === "books") {
           const bookSources = sources.filter((s) =>
             ["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"].includes(s)
           ) as BookSearchParams["sources"];
-          if (bookSources.length > 0) {
+          if (bookSources && bookSources.length > 0) {
             const params: BookSearchParams = {
               query: searchQuery,
               page: currentPage,
@@ -208,8 +107,11 @@ export default function DiscoverPage() {
         } else if (contentType === "papers") {
           const paperSources = sources.filter((s) => ["arxiv", "semanticscholar"].includes(s));
           const paperPromises = paperSources.map((source) => {
-            const params = { query: searchQuery };
-            return source === "arxiv" ? searchArxiv(params) : searchSemanticscholar(params);
+            if (source === "arxiv") {
+              return searchArxiv(searchQuery);
+            } else {
+              return searchSemanticScholar(searchQuery);
+            }
           });
           const paperResults = await Promise.all(paperPromises);
           allResults = paperResults.flat();
@@ -217,13 +119,28 @@ export default function DiscoverPage() {
         } else if (contentType === "novels") {
           const novelSources = sources.filter((s) => ["lnmtl", "royalroad", "webnovel"].includes(s));
           const novelPromises = novelSources.map((source) => {
-            const params = { query: searchQuery };
-            if (source === "lnmtl") return searchLnmtl(params);
-            if (source === "royalroad") return searchRoyalroad(params);
-            return searchWebnovel(params);
+            if (source === "lnmtl") return searchLNMTL(searchQuery);
+            if (source === "royalroad") return searchRoyalRoad(searchQuery);
+            return scrapeWebnovel(searchQuery);
           });
           const novelResults = await Promise.all(novelPromises);
-          allResults = novelResults.flat();
+          allResults = novelResults.flat().map(novel => {
+            const lightNovel = novel as { genre?: string; url?: string; chapters?: number };
+            return {
+              ...novel,
+              authors: ["Unknown Author"],
+              description: lightNovel.genre ? `Genre: ${lightNovel.genre}` : undefined,
+              coverImage: undefined,
+              publishedDate: undefined,
+              categories: lightNovel.genre ? [lightNovel.genre] : undefined,
+              language: undefined,
+              pageCount: lightNovel.chapters,
+              downloadUrl: lightNovel.url,
+              rating: undefined,
+              abstract: undefined,
+              chapters: undefined,
+            } as ExtendedBook;
+          });
           totalItems = allResults.length;
         }
 
@@ -247,6 +164,7 @@ export default function DiscoverPage() {
         setLoading(false);
       }
     };
+
     fetchResults();
   }, [searchQuery, currentPage, activeTab, sources, languages, sortBy, contentType]);
 
@@ -268,7 +186,7 @@ export default function DiscoverPage() {
     setCurrentPage(1);
   };
 
-  // Paginate results
+  // Paginate results (client-side)
   const paginatedResults = results.slice((currentPage - 1) * booksPerPage, currentPage * booksPerPage);
 
   return (
@@ -496,7 +414,7 @@ export default function DiscoverPage() {
   );
 }
 
-function BookCard({ book }: { book: Book }) {
+function BookCard({ book }: { book: ExtendedBook }) {
   const getSourceBadge = (source: string) => {
     switch (source) {
       case "openlibrary": return "Open Library";
@@ -533,7 +451,7 @@ function BookCard({ book }: { book: Book }) {
       <div className="p-4">
         <h3 className="font-semibold mb-1 line-clamp-1">{book.title}</h3>
         <p className="text-sm text-muted-foreground mb-2 line-clamp-1">
-          {book.authors.length > 0 ? book.authors.join(", ") : "Unknown Author"}
+          {book.authors && book.authors.length > 0 ? book.authors.join(", ") : "Unknown Author"}
         </p>
         {["arxiv", "semanticscholar"].includes(book.source) ? (
           <p className="text-sm text-muted-foreground mb-2 line-clamp-2">

@@ -1,14 +1,17 @@
 // lib/api/lnmtl.ts
 import { load } from "cheerio";
+import { Book } from "@/types/book";
 
-export interface LightNovel {
+interface LightNovelBase {
   id: string;
   title: string;
   chapters?: number;
   genre?: string;
-  source: "lnmtl" | "wuxiaworld" | "royalroad" | "novelupdates";
-  url?: string; // Added for linking to the source
+  source: "lnmtl" | "royalroad";
+  url?: string;
 }
+
+export type LightNovel = LightNovelBase & Partial<Book>;
 
 // Shared fetch utility with retry logic (similar to books.ts)
 async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
@@ -44,13 +47,13 @@ async function fetchWithRetry(url: string, retries = 3): Promise<Response> {
  * @param sortBy - Sort criteria (e.g., "popular", "latest")
  * @returns Array of LightNovel objects
  */
-export async function searchLNMTL(genre: string, sortBy: string = "popular"): Promise<LightNovel[]> {
+export async function searchLNMTL(genre: string, sortBy: string = "popular"): Promise<LightNovelBase[]> {
   const url = `https://lnmtl.com/novel?orderBy=${sortBy}&genre=${encodeURIComponent(genre)}`;
   try {
     const response = await fetchWithRetry(url);
     const html = await response.text();
     const $ = load(html);
-    const novels: LightNovel[] = [];
+    const novels: LightNovelBase[] = [];
 
     $("div.novel-item").each((_, element) => {
       const $el = $(element);
@@ -76,51 +79,12 @@ export async function searchLNMTL(genre: string, sortBy: string = "popular"): Pr
 }
 
 /**
- * Search WuxiaWorld for light novels (scraped)
- * @param genre - Genre to filter by
- * @param sortBy - Sort criteria (e.g., "popular", "latest")
- * @returns Array of LightNovel objects
- */
-export async function searchWuxiaWorld(genre: string, sortBy: string = "popular"): Promise<LightNovel[]> {
-  const sortParam = sortBy === "latest" ? "latest-series" : "completed-series"; // Simplified sorting
-  const url = `https://www.wuxiaworld.com/novels?genre=${encodeURIComponent(genre)}&sort=${sortParam}`;
-  try {
-    const response = await fetchWithRetry(url);
-    const html = await response.text();
-    const $ = load(html);
-    const novels: LightNovel[] = [];
-
-    $("article.novel-item").each((_, element) => {
-      const $el = $(element);
-      const title = $el.find("h3").text().trim();
-      const id = $el.find("a").attr("href")?.split("/").pop() || "";
-      const chaptersText = $el.find(".chapter-count").text().trim();
-      const chapters = chaptersText ? parseInt(chaptersText.replace(/\D/g, "")) : undefined;
-
-      novels.push({
-        id,
-        title: title || "Unknown Title",
-        chapters,
-        genre,
-        source: "wuxiaworld",
-        url: `https://www.wuxiaworld.com/novel/${id}`,
-      });
-    });
-
-    return novels.filter(novel => novel.id && novel.title !== "Unknown Title");
-  } catch (error) {
-    console.error("WuxiaWorld search failed:", error);
-    return [];
-  }
-}
-
-/**
  * Search Royal Road for light novels (API-based)
  * @param genre - Genre to filter by
  * @param sortBy - Sort criteria (e.g., "popular", "latest")
  * @returns Array of LightNovel objects
  */
-export async function searchRoyalRoad(genre: string, sortBy: string = "popular"): Promise<LightNovel[]> {
+export async function searchRoyalRoad(genre: string, sortBy: string = "popular"): Promise<LightNovelBase[]> {
   const sortMap: { [key: string]: string } = {
     popular: "popularity",
     latest: "latest-updates",
@@ -131,7 +95,7 @@ export async function searchRoyalRoad(genre: string, sortBy: string = "popular")
     const response = await fetchWithRetry(url);
     const html = await response.text(); // Royal Road API isn't public; scraping instead
     const $ = load(html);
-    const novels: LightNovel[] = [];
+    const novels: LightNovelBase[] = [];
 
     $(".fiction-list-item").each((_, element) => {
       const $el = $(element);
@@ -150,48 +114,9 @@ export async function searchRoyalRoad(genre: string, sortBy: string = "popular")
       });
     });
 
-    return novels.filter(novel => novel.id && novel.title !== "Unknown Title");
+    return novels.filter((novel: LightNovelBase) => novel.id && novel.title !== "Unknown Title");
   } catch (error) {
     console.error("Royal Road search failed:", error);
-    return [];
-  }
-}
-
-/**
- * Search Novel Updates for light novels (scraped)
- * @param genre - Genre to filter by
- * @param sortBy - Sort criteria (e.g., "popular", "latest")
- * @returns Array of LightNovel objects
- */
-export async function searchNovelUpdates(genre: string, sortBy: string = "popular"): Promise<LightNovel[]> {
-  const sortParam = sortBy === "latest" ? "date" : "rating";
-  const url = `https://www.novelupdates.com/genre/${encodeURIComponent(genre)}/?sort=${sortParam}`;
-  try {
-    const response = await fetchWithRetry(url);
-    const html = await response.text();
-    const $ = load(html);
-    const novels: LightNovel[] = [];
-
-    $(".search_title").each((_, element) => {
-      const $el = $(element);
-      const title = $el.find("a").text().trim();
-      const id = $el.find("a").attr("href")?.split("/").pop() || "";
-      const chaptersText = $el.find(".chapter-count").text().trim(); // Note: NU doesn’t always list chapters
-      const chapters = chaptersText ? parseInt(chaptersText.replace(/\D/g, "")) : undefined;
-
-      novels.push({
-        id,
-        title: title || "Unknown Title",
-        chapters,
-        genre,
-        source: "novelupdates",
-        url: `https://www.novelupdates.com/series/${id}`,
-      });
-    });
-
-    return novels.filter(novel => novel.id && novel.title !== "Unknown Title");
-  } catch (error) {
-    console.error("Novel Updates search failed:", error);
     return [];
   }
 }
@@ -206,13 +131,11 @@ export async function searchNovelUpdates(genre: string, sortBy: string = "popula
 export async function searchLightNovels(
   genre: string,
   sortBy: string = "popular",
-  sources: ("lnmtl" | "wuxiaworld" | "royalroad" | "novelupdates")[] = ["lnmtl", "wuxiaworld", "royalroad", "novelupdates"]
+  sources: ("lnmtl" | "royalroad")[] = ["lnmtl", "royalroad"]
 ): Promise<LightNovel[]> {
-  const searchFunctions: { [key: string]: (g: string, s: string) => Promise<LightNovel[]> } = {
+  const searchFunctions: { [key: string]: (g: string, s: string) => Promise<LightNovelBase[]> } = {
     lnmtl: searchLNMTL,
-    wuxiaworld: searchWuxiaWorld,
     royalroad: searchRoyalRoad,
-    novelupdates: searchNovelUpdates,
   };
 
   try {
@@ -222,7 +145,7 @@ export async function searchLightNovels(
     let allNovels: LightNovel[] = [];
     results.forEach((result, index) => {
       if (result.status === "fulfilled") {
-        allNovels = [...allNovels, ...result.value];
+        allNovels = [...allNovels, ...result.value.map(novel => ({ ...novel, source: sources[index] as "lnmtl" | "royalroad" } as LightNovel))];
       } else {
         console.warn(`Search failed for source ${sources[index]}:`, result.reason);
       }
@@ -231,7 +154,7 @@ export async function searchLightNovels(
     // Sort by title or chapters if available
     allNovels.sort((a, b) => {
       if (sortBy === "popular" && a.chapters && b.chapters) {
-        return (b.chapters || 0) - (a.chapters || 0); // Assuming more chapters = more popular
+        return (b.chapters || 0) - (a.chapters || 0);
       }
       return a.title.localeCompare(b.title);
     });

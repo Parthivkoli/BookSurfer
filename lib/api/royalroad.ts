@@ -107,7 +107,7 @@ export async function searchWuxiaWorld(genre: string, sortBy: string = "popular"
       });
     });
 
-    return novels.filter(novel => novel.id && novel.title !== "Unknown Title");
+    return novels.filter((novel: LightNovel) => novel.id && novel.title !== "Unknown Title");
   } catch (error) {
     console.error("WuxiaWorld search failed:", error);
     return [];
@@ -150,7 +150,7 @@ export async function searchRoyalRoad(genre: string, sortBy: string = "popular")
       });
     });
 
-    return novels.filter(novel => novel.id && novel.title !== "Unknown Title");
+    return novels.filter((novel: LightNovel) => novel.id && novel.title !== "Unknown Title");
   } catch (error) {
     console.error("Royal Road search failed:", error);
     return [];
@@ -176,7 +176,7 @@ export async function searchNovelUpdates(genre: string, sortBy: string = "popula
       const $el = $(element);
       const title = $el.find("a").text().trim();
       const id = $el.find("a").attr("href")?.split("/").pop() || "";
-      const chaptersText = $el.find(".chapter-count").text().trim(); // Note: NU doesn’t always list chapters
+      const chaptersText = $el.find(".chapter-count").text().trim(); // Note: NU doesn't always list chapters
       const chapters = chaptersText ? parseInt(chaptersText.replace(/\D/g, "")) : undefined;
 
       novels.push({
@@ -189,7 +189,7 @@ export async function searchNovelUpdates(genre: string, sortBy: string = "popula
       });
     });
 
-    return novels.filter(novel => novel.id && novel.title !== "Unknown Title");
+    return novels.filter((novel: LightNovel) => novel.id && novel.title !== "Unknown Title");
   } catch (error) {
     console.error("Novel Updates search failed:", error);
     return [];

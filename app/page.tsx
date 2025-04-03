@@ -92,7 +92,7 @@ export default async function Home() {
                   <div className="p-4">
                     <h3 className="font-semibold mb-1 line-clamp-1">{book.title}</h3>
                     <p className="text-sm text-muted-foreground mb-2">
-                      {book.authors.length > 0 ? book.authors[0] : "Unknown Author"}
+                      {book.authors && book.authors.length > 0 ? book.authors[0] : "Unknown Author"}
                     </p>
                     <div className="flex justify-between items-center">
                       <span className="text-sm">

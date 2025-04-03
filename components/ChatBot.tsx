@@ -45,8 +45,8 @@ const ChatBot = () => {
 
   async function searchBooks(query: string): Promise<Book[]> {
     try {
-      const [openLibraryBooks, gutenbergBooks, googleBooks] = await Promise.all([
-        fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}`)
+      const [openLibraryBooks, gutenbergBooks] = await Promise.all([
+        fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=5`)
           .then(res => res.json())
           .then(data => data.docs.map((doc: any) => ({
             id: doc.key,
@@ -54,7 +54,7 @@ const ChatBot = () => {
             authors: doc.author_name || [],
             coverImage: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : undefined,
           }))),
-        fetch(`https://gutendex.com/books?search=${encodeURIComponent(query)}`)
+        fetch(`https://gutendex.com/books?search=${encodeURIComponent(query)}&limit=5`)
           .then(res => res.json())
           .then(data => data.results.map((book: any) => ({
             id: book.id.toString(),
@@ -62,42 +62,89 @@ const ChatBot = () => {
             authors: book.authors.map((a: any) => a.name),
             coverImage: book.formats["image/jpeg"] || undefined,
           }))),
-        fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}`)
-          .then(res => res.json())
-          .then(data => data.items.map((item: any) => ({
-            id: item.id,
-            title: item.volumeInfo.title,
-            authors: item.volumeInfo.authors || [],
-            coverImage: item.volumeInfo.imageLinks?.thumbnail || undefined,
-          }))),
       ]);
-      return [...openLibraryBooks, ...gutenbergBooks, ...googleBooks];
+      return [...openLibraryBooks, ...gutenbergBooks].slice(0, 5); // Limit to 5 results
     } catch (error) {
       console.error("Error fetching books:", error);
       return [];
     }
   }
 
+  async function getWebInfo(query: string): Promise<string> {
+    try {
+      const response = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`);
+      const data = await response.json();
+      return data.Abstract || data.RelatedTopics?.[0]?.Text || "I couldn't find specific information about that.";
+    } catch (error) {
+      console.error("Error fetching web info:", error);
+      return "Sorry, I couldn't fetch that information right now.";
+    }
+  }
+
   const rules: ChatRule[] = [
-    { pattern: /^hello$/i, response: "Hello! How can I help you today?" },
+    { 
+      pattern: /^hello|hi|hey$/i, 
+      response: "Hello there! I'm BookBot, your smart assistant. How can I assist you today?" 
+    },
     {
-      pattern: /^find a book about (.+)$/i,
+      pattern: /^(?:find|search|look for) (?:a |some )?books? (?:about|on) (.+)$/i,
       response: async (match: RegExpMatchArray) => {
         const query = match[1];
         const books = await searchBooks(query);
         return books.length > 0 ? (
           <BookList books={books} />
         ) : (
-          `Sorry, I couldn't find any books about "${query}". Try another topic!`
+          `Sorry, I couldn't find any books about "${query}". Want me to search the web for more info instead?`
         );
       },
     },
-    { pattern: /^what is your name$/i, response: "I'm BookBot, your friendly book-finding assistant!" },
-    { pattern: /.*/i, response: "Try asking 'find a book about [topic]' or 'hello'!" },
+    {
+      pattern: /^what (?:is|are) (.+)\??$/i,
+      response: async (match: RegExpMatchArray) => {
+        const query = match[1];
+        const info = await getWebInfo(query);
+        return info;
+      },
+    },
+    { 
+      pattern: /^who (?:is|was) (.+)\??$/i,
+      response: async (match: RegExpMatchArray) => {
+        const query = match[1];
+        const info = await getWebInfo(query);
+        return info;
+      },
+    },
+    { 
+      pattern: /^tell me about (.+)$/i,
+      response: async (match: RegExpMatchArray) => {
+        const query = match[1];
+        const info = await getWebInfo(query);
+        return info;
+      },
+    },
+    { 
+      pattern: /^what is your name|who are you$/i, 
+      response: "I'm BookBot, your friendly assistant! I can help you find books or answer general questions." 
+    },
+    { 
+      pattern: /^thanks|thank you$/i,
+      response: "You're welcome! Anything else I can help with?" 
+    },
+    { 
+      pattern: /^how are you$/i,
+      response: "I'm doing great, thanks for asking! How about you?" 
+    },
+    { 
+      pattern: /.*/i, 
+      response: "I'm not sure how to respond to that. Try asking about books (e.g., 'find books about space') or general questions (e.g., 'what is quantum physics?')!" 
+    },
   ];
 
   useEffect(() => {
-    setMessages([{ sender: "BookBot", content: "Hello! How can I help you today?" }]);
+    setMessages([{ 
+      sender: "BookBot", 
+      content: "Hello! I'm BookBot. I can help you find books or answer questions. What’s on your mind?" 
+    }]);
   }, []);
 
   useEffect(() => {
@@ -120,7 +167,7 @@ const ChatBot = () => {
             if (typeof rule.response === "string") {
               response = rule.response;
             } else {
-              setMessages((prev) => [...prev, { sender: "BookBot", content: "Searching for books..." }]);
+              setMessages((prev) => [...prev, { sender: "BookBot", content: "Let me look that up..." }]);
               response = await rule.response(match);
               setMessages((prev) => prev.slice(0, -1).concat({ sender: "BookBot", content: response }));
             }
@@ -166,7 +213,7 @@ const ChatBot = () => {
         <input
           ref={userInputRef}
           type="text"
-          placeholder="Type your message... (e.g., 'find a book about space')"
+          placeholder="Ask me anything! (e.g., 'find books about space' or 'what is gravity?')"
           onKeyPress={handleInput}
           className="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 dark:focus:ring-primary-400 text-sm"
         />

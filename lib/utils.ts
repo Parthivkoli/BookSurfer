@@ -257,7 +257,7 @@ export function generateAnswer(content: string, question: string, maxSentences: 
   // Clean content and split into sentences
   const cleanedContent = content.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
   const sentences = splitIntoSentences(cleanedContent);
-  if (sentences.length === 0) {
+  if (!sentences || sentences.length === 0) {
     return "No relevant information found.";
   }
 
@@ -277,7 +277,7 @@ export function generateAnswer(content: string, question: string, maxSentences: 
   const questionWords = questionLower.match(/\b\w+\b/g) || [];
   const keywords = questionWords.filter(word => !stopWords.has(word) && word.length > 2);
   
-  if (keywords.length === 0) {
+  if (!keywords || keywords.length === 0) {
     return "Please provide a more specific question.";
   }
 

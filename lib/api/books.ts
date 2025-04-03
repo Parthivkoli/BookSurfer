@@ -11,8 +11,6 @@ const API_ENDPOINTS = {
   FEEDBOOKS: "https://www.feedbooks.com/publicdomain/catalog.atom",
 } as const;
 
-type SourceType = "openlibrary" | "gutenberg" | "google" | "internetarchive" | "librivox" | "feedbooks";
-
 // Cache setup (in-memory for simplicity; consider Redis for production)
 const cache: Map<string, { data: any; timestamp: number }> = new Map();
 const CACHE_TTL = 15 * 60 * 1000; // 15 minutes in milliseconds
@@ -39,16 +37,15 @@ const CONTENT_FILTERS = {
  */
 function applyContentFilters(books: Book[]): Book[] {
   return books.filter(book => {
-    const combinedText = `${book.title} ${book.description || ""} ${book.categories.join(" ")}`.toLowerCase();
+    const combinedText = `${book.title} ${book.description ?? book.abstract ?? ""} ${book.categories?.join(" ") ?? ""}`.toLowerCase();
     const hasAdultContent = CONTENT_FILTERS.adultContentKeywords.some(keyword => 
       combinedText.includes(keyword.toLowerCase())
     );
     
     if (hasAdultContent) return false;
-    
     if ((book.rating ?? 0) < CONTENT_FILTERS.minimumRating) return false;
     
-    if (book.categories.length > 0) {
+    if (book.categories && book.categories.length > 0) {
       const hasApprovedCategory = book.categories.some(category => 
         CONTENT_FILTERS.approvedCategories.some(approved => 
           category.toLowerCase().includes(approved.toLowerCase())
@@ -86,9 +83,8 @@ async function fetchWithCache(url: string, cacheKey: string): Promise<any> {
       if (!response.ok) {
         const errorText = await response.text().catch(() => "No error details available");
         if (response.status >= 500 && retries < MAX_RETRIES - 1) {
-          // Retry on server errors (5xx)
           retries++;
-          await new Promise(resolve => setTimeout(resolve, 1000 * retries)); // Exponential backoff
+          await new Promise(resolve => setTimeout(resolve, 1000 * retries));
           continue;
         }
         throw new Error(`HTTP error! Status: ${response.status}, URL: ${url}, Details: ${errorText}`);
@@ -103,7 +99,7 @@ async function fetchWithCache(url: string, cacheKey: string): Promise<any> {
         const text = await response.text();
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(text, "text/xml");
-        data = xmlToJson(xmlDoc);
+        data = xmlToJson(xmlDoc.documentElement);
       } else if (contentType.includes("text/html")) {
         const text = await response.text();
         data = { html: text };
@@ -116,51 +112,55 @@ async function fetchWithCache(url: string, cacheKey: string): Promise<any> {
       return data;
     } catch (error) {
       if (error instanceof TypeError && error.message.includes("Failed to fetch") && retries < MAX_RETRIES - 1) {
-        // Retry on network errors
         retries++;
         await new Promise(resolve => setTimeout(resolve, 1000 * retries));
         continue;
       }
       console.error(`Fetch failed after ${retries + 1} attempts for ${url}:`, error);
-      throw error; // Re-throw after max retries
+      throw error;
     }
   }
 }
 
 /**
  * Helper function to convert XML to JSON
+ * @param xml - XML Element to convert
+ * @returns JSON representation of the XML
  */
-function xmlToJson(xml: Document): any {
+function xmlToJson(xml: Element): any {
   const obj: any = {};
   
-  if (xml.nodeType === 1) {
-    if (xml.attributes.length > 0) {
-      obj["@attributes"] = {};
-      for (let i = 0; i < xml.attributes.length; i++) {
-        const attribute = xml.attributes.item(i);
-        if (attribute) {
-          obj["@attributes"][attribute.nodeName] = attribute.nodeValue;
-        }
+  if (xml.attributes.length > 0) {
+    obj["@attributes"] = {};
+    for (let i = 0; i < xml.attributes.length; i++) {
+      const attribute = xml.attributes.item(i);
+      if (attribute) {
+        obj["@attributes"][attribute.nodeName] = attribute.nodeValue;
       }
     }
-  } else if (xml.nodeType === 3) {
-    obj.text = xml.nodeValue?.trim();
   }
   
   if (xml.hasChildNodes()) {
     for (let i = 0; i < xml.childNodes.length; i++) {
       const item = xml.childNodes.item(i);
       if (item) {
-        const nodeName = item.nodeName;
-        if (typeof obj[nodeName] === "undefined") {
-          obj[nodeName] = xmlToJson(item as any);
-        } else {
-          if (typeof obj[nodeName].push === "undefined") {
-            const old = obj[nodeName];
-            obj[nodeName] = [];
-            obj[nodeName].push(old);
+        if (item.nodeType === 1) {
+          const nodeName = item.nodeName;
+          if (typeof obj[nodeName] === "undefined") {
+            obj[nodeName] = xmlToJson(item as Element);
+          } else {
+            if (typeof obj[nodeName].push === "undefined") {
+              const old = obj[nodeName];
+              obj[nodeName] = [];
+              obj[nodeName].push(old);
+            }
+            obj[nodeName].push(xmlToJson(item as Element));
           }
-          obj[nodeName].push(xmlToJson(item as any));
+        } else if (item.nodeType === 3) {
+          const text = item.nodeValue?.trim();
+          if (text) {
+            obj.text = text;
+          }
         }
       }
     }
@@ -174,36 +174,38 @@ function xmlToJson(xml: Document): any {
  * @returns Array of Book objects
  */
 export async function searchOpenLibrary(params: BookSearchParams): Promise<Book[]> {
-  const { query = "", page = 1, limit = 10, subject } = params;
+  const { query = "", page = 1, limit = 10, subject, sort } = params;
   const queryParams = new URLSearchParams({
     q: query || "*:*",
     page: page.toString(),
     limit: limit.toString(),
-    has_fulltext: "true", // Only return books with full text
+    has_fulltext: "true",
     ...(subject && { subject }),
+    ...(sort && { sort }),
   });
 
   const url = `${API_ENDPOINTS.OPEN_LIBRARY}?${queryParams.toString()}`;
-  const cacheKey = `openlibrary-${query}-${page}-${limit}-${subject || ""}`;
+  const cacheKey = `openlibrary-${query}-${page}-${limit}-${subject || ""}-${sort || ""}`;
 
   try {
     const data = await fetchWithCache(url, cacheKey);
     const books = (data.docs || []).map((book: any) => ({
       id: book.key || `openlibrary-${book.cover_i || Math.random().toString(36).slice(2)}`,
       title: book.title || "Unknown Title",
-      authors: Array.isArray(book.author_name) ? book.author_name : [],
-      coverImage: book.cover_i ? `https://covers.openlibrary.org/b/id/${book.cover_i}-M.jpg` : null,
-      description: typeof book.description === "string" ? book.description : "",
-      publishedDate: book.first_publish_year?.toString() || "",
-      categories: Array.isArray(book.subject) ? book.subject : [],
-      language: Array.isArray(book.language) ? book.language : [],
-      pageCount: book.number_of_pages_median || 0,
+      authors: Array.isArray(book.author_name) ? book.author_name : undefined,
+      author: Array.isArray(book.author_name) ? book.author_name[0] : undefined,
+      coverImage: book.cover_i ? `https://covers.openlibrary.org/b/id/${book.cover_i}-M.jpg` : undefined,
+      description: typeof book.description === "string" ? book.description : undefined,
+      publishedDate: book.first_publish_year?.toString(),
+      categories: Array.isArray(book.subject) ? book.subject : undefined,
+      language: Array.isArray(book.language) ? book.language : undefined,
+      pageCount: book.number_of_pages_median,
       source: "openlibrary" as const,
-      downloadUrl: book.key ? `https://openlibrary.org${book.key}` : null,
-      rating: book.rating_average ?? 0,
+      downloadUrl: book.key ? `https://openlibrary.org${book.key}` : undefined,
+      rating: book.rating_average,
     }));
     
-    return applyContentFilters(books); // has_fulltext ensures readability
+    return applyContentFilters(books);
   } catch (error) {
     console.error("Open Library search failed:", error);
     return [];
@@ -231,21 +233,21 @@ export async function searchGutenberg(params: BookSearchParams): Promise<Book[]>
     const books = (data.results || []).map((book: any) => ({
       id: `gutenberg-${book.id}`,
       title: book.title || "Unknown Title",
-      authors: Array.isArray(book.authors) ? book.authors.map((a: any) => a.name || "Unknown Author") : [],
-      coverImage: book.formats?.["image/jpeg"] || null,
-      description: "",
-      publishedDate: "",
-      categories: Array.isArray(book.subjects) ? book.subjects : [],
-      language: Array.isArray(book.languages) ? book.languages : [],
-      pageCount: 0,
+      authors: Array.isArray(book.authors) ? book.authors.map((a: any) => a.name || "Unknown Author") : undefined,
+      author: Array.isArray(book.authors) && book.authors.length ? book.authors[0].name : undefined,
+      coverImage: book.formats?.["image/jpeg"],
+      description: undefined,
+      publishedDate: undefined,
+      categories: Array.isArray(book.subjects) ? book.subjects : undefined,
+      language: Array.isArray(book.languages) ? book.languages : undefined,
+      pageCount: undefined,
       source: "gutenberg" as const,
       downloadUrl:
         book.formats?.["text/html"] ||
         book.formats?.["application/epub+zip"] ||
-        book.formats?.["text/plain"] ||
-        null,
+        book.formats?.["text/plain"],
       rating: 4.0,
-    })).filter(book => book.downloadUrl !== null); // Ensure readable
+    })).filter((book: Book) => book.downloadUrl !== undefined);
     
     return applyContentFilters(books);
   } catch (error) {
@@ -280,18 +282,19 @@ export async function searchGoogleBooks(params: BookSearchParams): Promise<Book[
       return {
         id: `google-${item.id}`,
         title: volumeInfo.title || "Unknown Title",
-        authors: Array.isArray(volumeInfo.authors) ? volumeInfo.authors : [],
-        coverImage: volumeInfo.imageLinks?.thumbnail || null,
-        description: volumeInfo.description || "",
-        publishedDate: volumeInfo.publishedDate || "",
-        categories: Array.isArray(volumeInfo.categories) ? volumeInfo.categories : [],
-        language: volumeInfo.language ? [volumeInfo.language] : [],
-        pageCount: volumeInfo.pageCount || 0,
+        authors: Array.isArray(volumeInfo.authors) ? volumeInfo.authors : undefined,
+        author: Array.isArray(volumeInfo.authors) && volumeInfo.authors.length ? volumeInfo.authors[0] : undefined,
+        coverImage: volumeInfo.imageLinks?.thumbnail,
+        description: volumeInfo.description,
+        publishedDate: volumeInfo.publishedDate,
+        categories: Array.isArray(volumeInfo.categories) ? volumeInfo.categories : undefined,
+        language: volumeInfo.language ? [volumeInfo.language] : undefined,
+        pageCount: volumeInfo.pageCount,
         source: "google" as const,
-        downloadUrl: accessInfo.epub?.downloadLink || accessInfo.pdf?.downloadLink || null,
-        rating: volumeInfo.averageRating ?? 0,
+        downloadUrl: accessInfo.epub?.downloadLink || accessInfo.pdf?.downloadLink,
+        rating: volumeInfo.averageRating,
       };
-    }).filter(book => book.downloadUrl !== null); // Only readable books
+    }).filter((book: Book) => book.downloadUrl !== undefined);
     
     return applyContentFilters(books);
   } catch (error) {
@@ -324,19 +327,20 @@ export async function searchInternetArchive(params: BookSearchParams): Promise<B
     const books = (data.response?.docs || []).map((book: any) => ({
       id: `internetarchive-${book.identifier}`,
       title: book.title || "Unknown Title",
-      authors: Array.isArray(book.creator) ? book.creator : book.creator ? [book.creator] : [],
+      authors: Array.isArray(book.creator) ? book.creator : book.creator ? [book.creator] : undefined,
+      author: Array.isArray(book.creator) && book.creator.length ? book.creator[0] : book.creator,
       coverImage: `https://archive.org/services/img/${book.identifier}`,
-      description: book.description || "",
-      publishedDate: book.year || "",
-      categories: Array.isArray(book.subject) ? book.subject : book.subject ? [book.subject] : [],
-      language: Array.isArray(book.language) ? book.language : book.language ? [book.language] : [],
-      pageCount: 0,
+      description: book.description,
+      publishedDate: book.year,
+      categories: Array.isArray(book.subject) ? book.subject : book.subject ? [book.subject] : undefined,
+      language: Array.isArray(book.language) ? book.language : book.language ? [book.language] : undefined,
+      pageCount: undefined,
       source: "internetarchive" as const,
       downloadUrl: `https://archive.org/details/${book.identifier}`,
-      rating: book.avg_rating ?? 0,
+      rating: book.avg_rating,
     }));
     
-    return applyContentFilters(books); // All have downloadUrl
+    return applyContentFilters(books);
   } catch (error) {
     console.error("Internet Archive search failed:", error);
     return [];
@@ -365,19 +369,20 @@ export async function searchLibriVox(params: BookSearchParams): Promise<Book[]> 
     const books = (data.books || []).map((book: any) => ({
       id: `librivox-${book.id}`,
       title: book.title || "Unknown Title",
-      authors: book.authors?.map((a: any) => `${a.first_name ?? ""} ${a.last_name ?? ""}`.trim()) || [],
-      coverImage: null,
-      description: book.description || "",
-      publishedDate: book.copyright_year || "",
-      categories: [],
-      language: [book.language || "English"],
-      pageCount: 0,
+      authors: book.authors?.map((a: any) => `${a.first_name ?? ""} ${a.last_name ?? ""}`.trim()) || undefined,
+      author: book.authors?.[0] ? `${book.authors[0].first_name ?? ""} ${book.authors[0].last_name ?? ""}`.trim() : undefined,
+      coverImage: undefined,
+      description: book.description,
+      publishedDate: book.copyright_year,
+      categories: undefined,
+      language: book.language ? [book.language] : undefined,
+      pageCount: undefined,
       source: "librivox" as const,
       downloadUrl: `https://librivox.org/api/feed/audiobooks/${book.id}/rss`,
       rating: 4.0,
     }));
     
-    return applyContentFilters(books); // All have downloadUrl
+    return applyContentFilters(books);
   } catch (error) {
     console.error("LibriVox search failed:", error);
     return [];
@@ -390,6 +395,7 @@ export async function searchLibriVox(params: BookSearchParams): Promise<Book[]> 
  * @returns Array of Book objects
  */
 export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]> {
+  const { query, limit = 10 } = params;
   const url = API_ENDPOINTS.FEEDBOOKS;
   const cacheKey = `feedbooks-all`;
 
@@ -416,31 +422,31 @@ export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]>
       books.push({
         id: `feedbooks-${id.split("/").pop() || Math.random().toString(36).slice(2)}`,
         title: title || "Unknown Title",
-        authors: author ? [author] : [],
-        coverImage: coverUrl || null,
-        description: description || "",
-        publishedDate: "",
-        categories,
+        authors: author ? [author] : undefined,
+        author,
+        coverImage: coverUrl,
+        description,
+        publishedDate: undefined,
+        categories: categories.length ? categories : undefined,
         language: ["English"],
-        pageCount: 0,
+        pageCount: undefined,
         source: "feedbooks" as const,
-        downloadUrl: downloadUrl || null,
+        downloadUrl,
         rating: 4.0,
       });
     });
 
-    // Filter for readability and query
-    books = books.filter(book => book.downloadUrl !== null);
-    if (params.query) {
-      const queryLower = params.query.toLowerCase();
+    books = books.filter(book => book.downloadUrl !== undefined);
+    if (query) {
+      const queryLower = query.toLowerCase();
       books = books.filter((book) =>
         book.title.toLowerCase().includes(queryLower) ||
-        book.authors.some((author) => author.toLowerCase().includes(queryLower)) ||
-        book.description.toLowerCase().includes(queryLower)
+        book.description?.toLowerCase().includes(queryLower) ||
+        book.authors?.some((author) => author.toLowerCase().includes(queryLower))
       );
     }
 
-    return applyContentFilters(books.slice(0, params.limit || 10));
+    return applyContentFilters(books.slice(0, limit));
   } catch (error) {
     console.error("Feedbooks search failed:", error);
     return [];
@@ -452,12 +458,12 @@ export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]>
  * @param params - Search parameters with optional source filter
  * @returns Books and total count
  */
-export async function searchBooks(params: BookSearchParams & { sources?: SourceType[] }): Promise<{
+export async function searchBooks(params: BookSearchParams & { sources?: ("openlibrary" | "gutenberg" | "google")[] }): Promise<{
   books: Book[];
   totalItems: number;
 }> {
-  const sources = params.sources || (["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"] as SourceType[]);
-  const searchFunctions: { [key in SourceType]: (p: BookSearchParams) => Promise<Book[]> } = {
+  const sources = params.sources || ["openlibrary", "gutenberg", "google"];
+  const searchFunctions: { [key: string]: (p: BookSearchParams) => Promise<Book[]> } = {
     openlibrary: searchOpenLibrary,
     gutenberg: searchGutenberg,
     google: searchGoogleBooks,
@@ -476,12 +482,14 @@ export async function searchBooks(params: BookSearchParams & { sources?: SourceT
     results.forEach((result, index) => {
       if (result.status === "fulfilled") {
         allBooks = [...allBooks, ...result.value];
-        if (sources[index] === "google") totalItems += 1000;
-        else if (sources[index] === "gutenberg") totalItems += 60000;
-        else if (sources[index] === "openlibrary") totalItems += 10000;
-        else if (sources[index] === "internetarchive") totalItems += 20000;
-        else if (sources[index] === "librivox") totalItems += 15000;
-        else if (sources[index] === "feedbooks") totalItems += 5000;
+        totalItems += {
+          openlibrary: 10000,
+          gutenberg: 60000,
+          google: 1000,
+          internetarchive: 20000,
+          librivox: 15000,
+          feedbooks: 5000
+        }[sources[index]] || 0;
       } else {
         console.warn(`Search failed for source ${sources[index]}:`, result.reason);
       }
@@ -515,18 +523,20 @@ export async function getBookById(id: string): Promise<Book | null> {
       const gutenbergId = id.replace("gutenberg-", "");
       const url = `${API_ENDPOINTS.GUTENBERG}/${gutenbergId}`;
       const data = await fetchWithCache(url, `gutenberg-book-${gutenbergId}`);
+      if (!data) return null;
       return {
         id,
         title: data.title || "Unknown Title",
-        authors: data.authors?.map((a: any) => a.name || "Unknown Author") || [],
-        coverImage: data.formats?.["image/jpeg"] || null,
-        description: "",
-        publishedDate: "",
-        categories: data.subjects || [],
-        language: data.languages || [],
-        pageCount: 0,
+        authors: data.authors?.map((a: any) => a.name || "Unknown Author"),
+        author: data.authors?.[0]?.name,
+        coverImage: data.formats?.["image/jpeg"],
+        description: undefined,
+        publishedDate: undefined,
+        categories: data.subjects,
+        language: data.languages,
+        pageCount: undefined,
         source: "gutenberg" as const,
-        downloadUrl: data.formats?.["text/html"] || data.formats?.["application/epub+zip"] || data.formats?.["text/plain"] || null,
+        downloadUrl: data.formats?.["text/html"] || data.formats?.["application/epub+zip"] || data.formats?.["text/plain"],
         rating: 4.0,
       };
     },
@@ -534,58 +544,64 @@ export async function getBookById(id: string): Promise<Book | null> {
       const googleId = id.replace("google-", "");
       const url = `${API_ENDPOINTS.GOOGLE_BOOKS}/${googleId}`;
       const data = await fetchWithCache(url, `google-book-${googleId}`);
+      if (!data) return null;
       const volumeInfo = data.volumeInfo || {};
       const accessInfo = data.accessInfo || {};
       return {
         id,
         title: volumeInfo.title || "Unknown Title",
-        authors: volumeInfo.authors || [],
-        coverImage: volumeInfo.imageLinks?.thumbnail || null,
-        description: volumeInfo.description || "",
-        publishedDate: volumeInfo.publishedDate || "",
-        categories: volumeInfo.categories || [],
-        language: volumeInfo.language ? [volumeInfo.language] : [],
-        pageCount: volumeInfo.pageCount || 0,
+        authors: volumeInfo.authors,
+        author: volumeInfo.authors?.[0],
+        coverImage: volumeInfo.imageLinks?.thumbnail,
+        description: volumeInfo.description,
+        publishedDate: volumeInfo.publishedDate,
+        categories: volumeInfo.categories,
+        language: volumeInfo.language ? [volumeInfo.language] : undefined,
+        pageCount: volumeInfo.pageCount,
         source: "google" as const,
-        downloadUrl: accessInfo.epub?.downloadLink || accessInfo.pdf?.downloadLink || null,
-        rating: volumeInfo.averageRating ?? 0,
+        downloadUrl: accessInfo.epub?.downloadLink || accessInfo.pdf?.downloadLink,
+        rating: volumeInfo.averageRating,
       };
     },
     "internetarchive-": async () => {
       const archiveId = id.replace("internetarchive-", "");
       const url = `https://archive.org/metadata/${archiveId}`;
       const data = await fetchWithCache(url, `internetarchive-book-${archiveId}`);
+      if (!data) return null;
       const metadata = data.metadata || {};
       return {
         id,
         title: metadata.title || "Unknown Title",
-        authors: metadata.creator ? (Array.isArray(metadata.creator) ? metadata.creator : [metadata.creator]) : [],
+        authors: metadata.creator ? (Array.isArray(metadata.creator) ? metadata.creator : [metadata.creator]) : undefined,
+        author: metadata.creator ? (Array.isArray(metadata.creator) ? metadata.creator[0] : metadata.creator) : undefined,
         coverImage: `https://archive.org/services/img/${archiveId}`,
-        description: metadata.description || "",
-        publishedDate: metadata.year || "",
-        categories: metadata.subject ? (Array.isArray(metadata.subject) ? metadata.subject : [metadata.subject]) : [],
-        language: metadata.language ? (Array.isArray(metadata.language) ? metadata.language : [metadata.language]) : [],
-        pageCount: 0,
+        description: metadata.description,
+        publishedDate: metadata.year,
+        categories: metadata.subject ? (Array.isArray(metadata.subject) ? metadata.subject : [metadata.subject]) : undefined,
+        language: metadata.language ? (Array.isArray(metadata.language) ? metadata.language : [metadata.language]) : undefined,
+        pageCount: undefined,
         source: "internetarchive" as const,
         downloadUrl: `https://archive.org/download/${archiveId}/${archiveId}.pdf`,
-        rating: metadata.avg_rating ?? 0,
+        rating: metadata.avg_rating,
       };
     },
     "librivox-": async () => {
       const librivoxId = id.replace("librivox-", "");
       const url = `${API_ENDPOINTS.LIBRIVOX}?id=${librivoxId}&format=json`;
       const data = await fetchWithCache(url, `librivox-book-${librivoxId}`);
+      if (!data) return null;
       const book = data.books?.[0] || {};
       return {
         id,
         title: book.title || "Unknown Title",
-        authors: book.authors?.map((a: any) => `${a.first_name ?? ""} ${a.last_name ?? ""}`.trim()) || [],
-        coverImage: null,
-        description: book.description || "",
-        publishedDate: book.copyright_year || "",
-        categories: [],
-        language: [book.language || "English"],
-        pageCount: 0,
+        authors: book.authors?.map((a: any) => `${a.first_name ?? ""} ${a.last_name ?? ""}`.trim()),
+        author: book.authors?.[0] ? `${book.authors[0].first_name ?? ""} ${book.authors[0].last_name ?? ""}`.trim() : undefined,
+        coverImage: undefined,
+        description: book.description,
+        publishedDate: book.copyright_year,
+        categories: undefined,
+        language: book.language ? [book.language] : undefined,
+        pageCount: undefined,
         source: "librivox" as const,
         downloadUrl: `https://librivox.org/rss/${librivoxId}`,
         rating: 4.0,
@@ -593,54 +609,69 @@ export async function getBookById(id: string): Promise<Book | null> {
     },
     "feedbooks-": async () => {
       const feedbooksId = id.replace("feedbooks-", "");
+      const url = `${API_ENDPOINTS.FEEDBOOKS}`;
+      const data = await fetchWithCache(url, `feedbooks-book-${feedbooksId}`);
+      if (!data) return null;
+      const $ = load(data);
+      const entry = $("entry").filter((_, e) => $(e).find("id").text().includes(feedbooksId)).first();
+      if (!entry.length) return null;
+      const title = entry.find("title").text().trim();
+      const author = entry.find("author name").text().trim();
+      const description = entry.find("summary").text().trim();
+      const coverUrl = entry.find('link[rel="http://opds-spec.org/image"]').attr("href");
+      const downloadUrl = entry.find('link[rel="http://opds-spec.org/acquisition"]').attr("href");
+      const categories: string[] = [];
+      entry.find("category").each((_, catElement) => {
+        categories.push($(catElement).attr("term") || "");
+      });
       return {
         id,
-        title: "Book from Feedbooks",
-        authors: ["Unknown Author"],
-        coverImage: null,
-        description: "Book details unavailable",
-        publishedDate: "",
-        categories: [],
+        title: title || "Unknown Title",
+        authors: author ? [author] : undefined,
+        author,
+        coverImage: coverUrl,
+        description,
+        publishedDate: undefined,
+        categories: categories.length ? categories : undefined,
         language: ["English"],
-        pageCount: 0,
+        pageCount: undefined,
         source: "feedbooks" as const,
-        downloadUrl: `https://www.feedbooks.com/book/${feedbooksId}`,
+        downloadUrl,
         rating: 4.0,
       };
     },
     "": async () => {
       const url = `https://openlibrary.org/works/${id}.json`;
       const data = await fetchWithCache(url, `openlibrary-book-${id}`);
-      const coverImage = data.covers?.[0] ? `https://covers.openlibrary.org/b/id/${data.covers[0]}-M.jpg` : null;
+      if (!data) return null;
+      const coverImage = data.covers?.[0] ? `https://covers.openlibrary.org/b/id/${data.covers[0]}-M.jpg` : undefined;
       return {
         id,
         title: data.title || "Unknown Title",
-        authors: data.authors?.map((a: any) => a.name) || [],
+        authors: data.authors?.map((a: any) => a.name || "Unknown Author"),
+        author: data.authors?.[0]?.name,
         coverImage,
-        description: typeof data.description === "object" ? data.description.value ?? "" : data.description || "",
-        publishedDate: data.first_publish_date || "",
-        categories: data.subjects || [],
-        language: [],
-        pageCount: 0,
+        description: typeof data.description === "object" ? data.description.value : data.description,
+        publishedDate: data.first_publish_date,
+        categories: data.subjects,
+        language: undefined,
+        pageCount: undefined,
         source: "openlibrary" as const,
-        downloadUrl: `https://openlibrary.org${data.key || ""}`,
-        rating: 0,
+        downloadUrl: data.key ? `https://openlibrary.org${data.key}` : undefined,
+        rating: undefined,
       };
     },
   };
 
   try {
     const sourcePrefix = Object.keys(sourceMap).find(prefix => id.startsWith(prefix));
-    const sourceFn = sourcePrefix ? sourceMap[sourcePrefix] : sourceMap[""];
-    
+    const sourceFn = sourcePrefix !== undefined ? sourceMap[sourcePrefix] : sourceMap[""];
     const book = await sourceFn();
     
-    if (book && book.downloadUrl) {
-      const filteredBooks = applyContentFilters([book]);
-      return filteredBooks.length > 0 ? filteredBooks[0] : null;
-    }
+    if (!book || !book.downloadUrl) return null;
     
-    return null;
+    const filteredBooks = applyContentFilters([book]);
+    return filteredBooks.length > 0 ? filteredBooks[0] : null;
   } catch (error) {
     console.error(`Failed to fetch book with ID ${id}:`, error);
     return null;
@@ -655,11 +686,12 @@ export async function getBookById(id: string): Promise<Book | null> {
 export async function getBookContent(id: string): Promise<string | null> {
   try {
     const book = await getBookById(id);
-    if (!book || !book.downloadUrl) {
-      console.error(`No download URL found for book ID: ${id}`);
+    if (!book || (!book.downloadUrl && !book.pdfUrl)) {
+      console.error(`No download URL or PDF URL found for book ID: ${id}`);
       return null;
     }
 
+    const url = book.downloadUrl || book.pdfUrl;
     const cacheKey = `book-content-${id}`;
     const cachedContent = cache.get(cacheKey);
     const now = Date.now();
@@ -668,9 +700,9 @@ export async function getBookContent(id: string): Promise<string | null> {
       return cachedContent.data as string;
     }
 
-    const response = await fetch(book.downloadUrl, { cache: "no-store" });
+    const response = await fetch(url!, { cache: "no-store" });
     if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status} for URL: ${book.downloadUrl}`);
+      throw new Error(`HTTP error! Status: ${response.status} for URL: ${url}`);
     }
 
     let content: string;
@@ -685,6 +717,8 @@ export async function getBookContent(id: string): Promise<string | null> {
       const text = await response.text();
       const $ = load(text);
       content = $("body").text().trim() || "No readable text found in HTML.";
+    } else if (contentType.includes("application/pdf")) {
+      content = "PDF content not directly readable as text. Use a PDF parser library.";
     } else {
       content = await response.text();
     }
@@ -705,42 +739,29 @@ export async function getBookContent(id: string): Promise<string | null> {
  */
 export async function getRecommendedBooks(id: string, limit: number = 5): Promise<Book[]> {
   try {
-    const source = id.split('-')[0] as SourceType;
-    let searchParams: BookSearchParams = { limit };
-    
     const book = await getBookById(id);
     if (!book) return [];
     
-    if (book.authors.length > 0) {
-      searchParams.author = book.authors[0];
-    } else if (book.categories.length > 0) {
+    const searchParams: BookSearchParams = { limit };
+    if (book.authors?.length) {
+      searchParams.query = book.authors[0];
+    } else if (book.author) {
+      searchParams.query = book.author;
+    } else if (book.categories?.length) {
       searchParams.subject = book.categories[0];
     } else {
       const titleWords = book.title.split(' ')
         .filter(word => word.length > 4)
         .slice(0, 2);
-      searchParams.query = titleWords.length > 0 ? titleWords.join(' ') : "classic literature";
+      searchParams.query = titleWords.length ? titleWords.join(' ') : "classic literature";
     }
     
     const { books } = await searchBooks({
       ...searchParams,
-      sources: [source]
+      sources: ["openlibrary", "gutenberg", "google"]
     });
     
-    let recommendations = books.filter(rec => rec.id !== id);
-    
-    if (recommendations.length < limit) {
-      const { books: moreBooks } = await searchBooks({
-        ...searchParams,
-        sources: Object.keys(API_ENDPOINTS).map(k => k.toLowerCase() as SourceType)
-      });
-      
-      const existingIds = new Set(recommendations.map(b => b.id));
-      const additionalBooks = moreBooks.filter(b => b.id !== id && !existingIds.has(b.id));
-      recommendations = [...recommendations, ...additionalBooks];
-    }
-    
-    return recommendations.slice(0, limit);
+    return books.filter(rec => rec.id !== id).slice(0, limit);
   } catch (error) {
     console.error("Failed to get book recommendations:", error);
     return [];
@@ -755,25 +776,19 @@ export async function getRecommendedBooks(id: string, limit: number = 5): Promis
  */
 export async function getTrendingBooks(limit: number = 10, category?: string): Promise<Book[]> {
   try {
-    const sources: SourceType[] = ["openlibrary", "gutenberg"];
+    const sources: ("openlibrary" | "gutenberg" | "google")[] = ["openlibrary", "gutenberg"];
     const params: BookSearchParams = {
       limit: Math.ceil(limit / sources.length) + 5,
-      subject: category
+      subject: category,
+      sort: "rating"
     };
     
     const promises = sources.map(async (source) => {
       switch (source) {
         case "openlibrary":
-          return searchOpenLibrary({
-            ...params,
-            query: category || "trending",
-            sort: "rating"
-          });
+          return searchOpenLibrary(params);
         case "gutenberg":
-          return searchGutenberg({
-            ...params,
-            query: category || "popular"
-          });
+          return searchGutenberg({ ...params, query: category || "popular" });
         default:
           return [];
       }
@@ -813,24 +828,13 @@ export async function getFeaturedBooks(limit: number = 4): Promise<Book[]> {
  */
 export async function getNewReleases(limit: number = 10, daysBack: number = 30): Promise<Book[]> {
   try {
-    const sources: SourceType[] = ["openlibrary"];
+    const sources: ("openlibrary" | "gutenberg" | "google")[] = ["openlibrary"];
     const params: BookSearchParams = {
       limit: Math.ceil(limit / sources.length) + 3,
-      sort: "new"
+      sort: "date"
     };
     
-    const promises = sources.map(async (source) => {
-      switch (source) {
-        case "openlibrary":
-          return searchOpenLibrary({
-            ...params,
-            query: "recent"
-          });
-        default:
-          return [];
-      }
-    });
-    
+    const promises = sources.map(async () => searchOpenLibrary({ ...params, query: "recent" }));
     const results = await Promise.allSettled(promises);
     
     let allBooks: Book[] = [];
@@ -849,11 +853,7 @@ export async function getNewReleases(limit: number = 10, daysBack: number = 30):
       return !isNaN(publishDate.getTime()) && publishDate >= cutoffDate;
     });
     
-    if (newBooks.length < limit) {
-      return allBooks.slice(0, limit);
-    }
-    
-    return newBooks.slice(0, limit);
+    return newBooks.length < limit ? allBooks.slice(0, limit) : newBooks.slice(0, limit);
   } catch (error) {
     console.error("Failed to get new releases:", error);
     return [];
@@ -869,8 +869,9 @@ export async function getNewReleases(limit: number = 10, daysBack: number = 30):
 export async function getBooksByAuthor(authorName: string, limit: number = 10): Promise<Book[]> {
   try {
     const params: BookSearchParams = {
-      author: authorName,
-      limit
+      query: authorName,
+      limit,
+      sort: "relevance"
     };
     
     const { books } = await searchBooks({
@@ -880,10 +881,8 @@ export async function getBooksByAuthor(authorName: string, limit: number = 10): 
     
     const authorNameLower = authorName.toLowerCase();
     const filteredBooks = books.filter(book => 
-      book.authors.some(author => 
-        author.toLowerCase().includes(authorNameLower) || 
-        authorNameLower.includes(author.toLowerCase())
-      )
+      (book.authors?.some(author => author.toLowerCase().includes(authorNameLower)) ||
+       book.author?.toLowerCase().includes(authorNameLower)) ?? false
     );
     
     return filteredBooks.slice(0, limit);

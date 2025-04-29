@@ -1,204 +1,226 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
 import { MainNav } from "@/components/main-nav";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { useAuth } from "@/components/user-auth-provider";
-import { useRouter } from "next/navigation";
-import { Loader2, User, BookOpen, Clock, Settings } from "lucide-react";
+import { Loader2, Image, User, Trash2 } from "lucide-react";
+import { useState } from "react";
 
 export default function ProfilePage() {
-  const { user, loading } = useAuth();
-  const { toast } = useToast();
+  const { data: session, status } = useSession();
   const router = useRouter();
-  
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
+  const { toast } = useToast();
   const [isUpdating, setIsUpdating] = useState(false);
-  
-  // Redirect if not logged in
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/login");
-    } else if (user) {
-      setName(user.name);
-      setEmail(user.email);
-    }
-  }, [user, loading, router]);
-  
-  const handleUpdateProfile = (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    setIsUpdating(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setIsUpdating(false);
-      
-      toast({
-        title: "Profile Updated",
-        description: "Your profile has been updated successfully.",
-      });
-    }, 1000);
-  };
-  
-  if (loading || !user) {
+
+  // Show loading state
+  if (status === "loading") {
     return (
       <div className="min-h-screen flex flex-col">
         <MainNav />
         <div className="flex-1 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-muted-foreground">Loading profile...</p>
+          </div>
         </div>
       </div>
     );
   }
-  
+
+  // Redirect if not authenticated
+  if (status === "unauthenticated") {
+    router.push("/auth/signin");
+    return null;
+  }
+
+  const user = session?.user;
+  if (!user) {
+    toast({
+      title: "Error",
+      description: "Unable to load user data",
+      variant: "destructive",
+    });
+    return null;
+  }
+
+  const initials = user.name
+    ?.split(" ")
+    .map((n) => n[0])
+    .join("")
+    .toUpperCase();
+
+  const handleChangeProfilePicture = async () => {
+    setIsUpdating(true);
+    try {
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      toast({
+        title: "Profile Picture Update",
+        description: "This feature is coming soon!",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update profile picture",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleUpdateAccount = async () => {
+    setIsUpdating(true);
+    try {
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      toast({
+        title: "Account Update",
+        description: "This feature is coming soon!",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to update account information",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setIsUpdating(true);
+    try {
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      toast({
+        title: "Account Deletion",
+        description: "This feature is coming soon!",
+        variant: "destructive",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to delete account",
+        variant: "destructive",
+      });
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex flex-col">
       <MainNav />
-      <div className="flex-1 container py-8">
-        <h1 className="text-3xl font-bold mb-6">My Profile</h1>
-        
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Sidebar */}
-          <div className="space-y-6">
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex flex-col items-center">
-                  <div className="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-                    <User className="h-12 w-12 text-primary" />
-                  </div>
-                  <h2 className="text-xl font-bold">{user.name}</h2>
-                  <p className="text-sm text-muted-foreground">{user.email}</p>
+      <main className="flex-1 container py-8">
+        <div className="max-w-2xl mx-auto">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center space-x-4">
+                <Avatar className="h-16 w-16">
+                  <AvatarImage 
+                    src={user.image || undefined} 
+                    alt={user.name || "Profile picture"}
+                  />
+                  <AvatarFallback>{initials}</AvatarFallback>
+                </Avatar>
+                <div>
+                  <CardTitle className="text-2xl">{user.name}</CardTitle>
+                  <CardDescription>{user.email}</CardDescription>
                 </div>
-              </CardContent>
-            </Card>
-            
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Reading Stats</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center">
-                    <BookOpen className="h-4 w-4 mr-2 text-primary" />
-                    <span className="text-sm">Books Read</span>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                <div>
+                  <h3 className="text-lg font-medium">Account Information</h3>
+                  <div className="mt-2 space-y-2">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Name</span>
+                      <span>{user.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Email</span>
+                      <span>{user.email}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Account Type</span>
+                      <span className="capitalize">
+                        {user.email?.includes("@gmail.com") ? "Google" : "GitHub"}
+                      </span>
+                    </div>
                   </div>
-                  <span className="font-medium">12</span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center">
-                    <Clock className="h-4 w-4 mr-2 text-primary" />
-                    <span className="text-sm">Reading Time</span>
+
+                <div className="pt-4">
+                  <h3 className="text-lg font-medium">Account Actions</h3>
+                  <div className="mt-4 space-y-2">
+                    <Button 
+                      variant="outline" 
+                      className="w-full"
+                      onClick={handleChangeProfilePicture}
+                      disabled={isUpdating}
+                    >
+                      {isUpdating ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Updating...
+                        </>
+                      ) : (
+                        <>
+                          <Image className="mr-2 h-4 w-4" />
+                          Change Profile Picture
+                        </>
+                      )}
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      className="w-full"
+                      onClick={handleUpdateAccount}
+                      disabled={isUpdating}
+                    >
+                      {isUpdating ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Updating...
+                        </>
+                      ) : (
+                        <>
+                          <User className="mr-2 h-4 w-4" />
+                          Update Account Information
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      className="w-full"
+                      onClick={handleDeleteAccount}
+                      disabled={isUpdating}
+                    >
+                      {isUpdating ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Deleting...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Delete Account
+                        </>
+                      )}
+                    </Button>
                   </div>
-                  <span className="font-medium">48h 23m</span>
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-          
-          {/* Main Content */}
-          <div className="md:col-span-2">
-            <Tabs defaultValue="profile" className="w-full">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="profile">Profile</TabsTrigger>
-                <TabsTrigger value="preferences">Reading Preferences</TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="profile" className="mt-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Profile Information</CardTitle>
-                    <CardDescription>
-                      Update your personal information
-                    </CardDescription>
-                  </CardHeader>
-                  <form onSubmit={handleUpdateProfile}>
-                    <CardContent className="space-y-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="name">Full Name</Label>
-                        <Input
-                          id="name"
-                          value={name}
-                          onChange={(e) => setName(e.target.value)}
-                        />
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label htmlFor="email">Email</Label>
-                        <Input
-                          id="email"
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                        />
-                      </div>
-                    </CardContent>
-                    <CardFooter>
-                      <Button type="submit" disabled={isUpdating}>
-                        {isUpdating ? (
-                          <>
-                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            Updating...
-                          </>
-                        ) : (
-                          "Save Changes"
-                        )}
-                      </Button>
-                    </CardFooter>
-                  </form>
-                </Card>
-              </TabsContent>
-              
-              <TabsContent value="preferences" className="mt-6">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Reading Preferences</CardTitle>
-                    <CardDescription>
-                      Customize your reading experience
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="font-size">Default Font Size</Label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <Button variant="outline">Small</Button>
-                        <Button variant="default">Medium</Button>
-                        <Button variant="outline">Large</Button>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="theme">Default Reading Theme</Label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <Button variant="outline">Light</Button>
-                        <Button variant="default">Dark</Button>
-                        <Button variant="outline">Sepia</Button>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label htmlFor="auto-play">Text-to-Speech Settings</Label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <Button variant="outline">Auto-Play Off</Button>
-                        <Button variant="outline">Voice: Default</Button>
-                      </div>
-                    </div>
-                  </CardContent>
-                  <CardFooter>
-                    <Button>Save Preferences</Button>
-                  </CardFooter>
-                </Card>
-              </TabsContent>
-            </Tabs>
-          </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      </main>
     </div>
   );
 }

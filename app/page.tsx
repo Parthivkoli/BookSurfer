@@ -149,7 +149,7 @@ export default async function Home() {
                   </Link>
                 </li>
                 <li>
-                  <Link href="/careers" className="text-muted-foreground hover:text-foreground">
+                  <Link href="/contribute" className="text-muted-foreground hover:text-foreground">
                     Contribute
                   </Link>
                 </li>

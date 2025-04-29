@@ -4,10 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { BookOpen, LogOut, User, Menu } from "lucide-react";
+import { useSession, signOut } from "next-auth/react";
 
 import { cn } from "@/lib/utils"; // Ensure this resolves correctly
 import { ThemeToggle } from "@/components/theme-toggle";
-import { useAuth } from "@/components/user-auth-provider";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -24,7 +24,7 @@ export function MainNav({
   ...props
 }: React.HTMLAttributes<HTMLElement>) {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { data: session, status } = useSession();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
 
   const navItems = [
@@ -102,24 +102,41 @@ export function MainNav({
         {/* Right Side Actions */}
         <div className="flex items-center space-x-4">
           <ThemeToggle />
-          {user ? (
+          {status === "authenticated" ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                  <User className="h-5 w-5 text-gray-600 dark:text-gray-300" />
+                  {session.user?.image ? (
+                    <img
+                      src={session.user.image}
+                      alt={session.user.name || "Profile"}
+                      className="h-8 w-8 rounded-full"
+                    />
+                  ) : (
+                    <User className="h-5 w-5 text-gray-600 dark:text-gray-300" />
+                  )}
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuLabel className="font-semibold">My Account</DropdownMenuLabel>
+                <DropdownMenuLabel className="font-semibold">
+                  {session.user?.name || "My Account"}
+                </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem>
-                  <Link href="/profile" className="flex w-full">Profile</Link>
+                  <Link href="/profile" className="flex w-full">
+                    Profile
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuItem>
-                  <Link href="/settings" className="flex w-full">Settings</Link>
+                  <Link href="/settings" className="flex w-full">
+                    Settings
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={logout} className="cursor-pointer">
+                <DropdownMenuItem
+                  onClick={() => signOut({ callbackUrl: "/" })}
+                  className="cursor-pointer"
+                >
                   <LogOut className="mr-2 h-4 w-4" />
                   <span>Log out</span>
                 </DropdownMenuItem>
@@ -127,7 +144,7 @@ export function MainNav({
             </DropdownMenu>
           ) : (
             <Link
-              href="/login"
+              href="/auth/signin"
               className="text-sm font-medium text-muted-foreground hover:text-primary transition-colors px-3 py-2 rounded-md"
             >
               Login

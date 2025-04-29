@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
 export function MainNav({
   className,
@@ -106,15 +107,15 @@ export function MainNav({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" className="relative h-8 w-8 rounded-full">
-                  {session.user?.image ? (
-                    <img
-                      src={session.user.image}
-                      alt={session.user.name || "Profile"}
-                      className="h-8 w-8 rounded-full"
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage 
+                      src={session.user?.image || undefined} 
+                      alt={session.user?.name || "Profile"}
                     />
-                  ) : (
-                    <User className="h-5 w-5 text-gray-600 dark:text-gray-300" />
-                  )}
+                    <AvatarFallback>
+                      {session.user?.name?.split(" ").map(n => n[0]).join("") || "U"}
+                    </AvatarFallback>
+                  </Avatar>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">

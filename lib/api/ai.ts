@@ -1,5 +1,21 @@
 import { Book } from "@/types/book";
 
+// Common English stop words to filter out
+const stopWords = new Set([
+  'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'for', 'from', 'has', 'he',
+  'in', 'is', 'it', 'its', 'of', 'on', 'that', 'the', 'to', 'was', 'were',
+  'will', 'with', 'i', 'you', 'they', 'we', 'my', 'your', 'his', 'her', 'their',
+  'our', 'this', 'that', 'these', 'those', 'am', 'been', 'being', 'have', 'had',
+  'has', 'having', 'do', 'does', 'did', 'doing', 'would', 'should', 'could',
+  'ought', 'i\'m', 'you\'re', 'he\'s', 'she\'s', 'it\'s', 'we\'re', 'they\'re',
+  'i\'ve', 'you\'ve', 'we\'ve', 'they\'ve', 'i\'d', 'you\'d', 'he\'d', 'she\'d',
+  'we\'d', 'they\'d', 'i\'ll', 'you\'ll', 'he\'ll', 'she\'ll', 'we\'ll', 'they\'ll',
+  'isn\'t', 'aren\'t', 'wasn\'t', 'weren\'t', 'hasn\'t', 'haven\'t', 'hadn\'t',
+  'doesn\'t', 'don\'t', 'didn\'t', 'won\'t', 'wouldn\'t', 'shan\'t', 'shouldn\'t',
+  'can\'t', 'cannot', 'couldn\'t', 'mustn\'t', 'let\'s', 'that\'s', 'who\'s',
+  'what\'s', 'here\'s', 'there\'s', 'when\'s', 'where\'s', 'why\'s', 'how\'s'
+]);
+
 // Mock book content for demo purposes
 const SAMPLE_BOOK_CONTENT = `
 Alice was beginning to get very tired of sitting by her sister on the bank, and of having nothing to do: once or twice she had peeped into the book her sister was reading, but it had no pictures or conversations in it, "and what is the use of a book," thought Alice "without pictures or conversations?"
@@ -106,44 +122,161 @@ export async function summarizeContent(bookTitle: string, content: string): Prom
 /**
  * Generate an AI response to a question about the book
  */
-export async function generateAIResponse(bookTitle: string, content: string, question: string): Promise<string> {
-  // In a real application, this would call an AI API like OpenAI
-  // For demo purposes, we'll simulate a delay and return mock answers
+export async function generateAIResponse(
+  bookTitle: string,
+  content: string,
+  question: string,
+  context: {
+    currentChapter?: string;
+    previousContent?: string;
+    bookMetadata?: {
+      author?: string;
+      genre?: string[];
+      themes?: string[];
+    };
+  } = {}
+): Promise<string> {
+  // Clean and normalize inputs
+  const cleanContent = content.toLowerCase().replace(/[^\w\s]/g, ' ');
+  const cleanQuestion = question.toLowerCase().trim();
   
-  // Simulate API call delay
-  await new Promise(resolve => setTimeout(resolve, 2000));
+  // Identify question type
+  const questionTypes = {
+    what: cleanQuestion.includes('what'),
+    who: cleanQuestion.includes('who'),
+    why: cleanQuestion.includes('why'),
+    how: cleanQuestion.includes('how'),
+    when: cleanQuestion.includes('when'),
+    where: cleanQuestion.includes('where'),
+    theme: cleanQuestion.includes('theme') || cleanQuestion.includes('meaning'),
+    character: cleanQuestion.includes('character') || cleanQuestion.includes('protagonist'),
+    summary: cleanQuestion.includes('summarize') || cleanQuestion.includes('summary'),
+    analysis: cleanQuestion.includes('analyze') || cleanQuestion.includes('analysis')
+  };
   
-  // Common questions about Alice in Wonderland
-  if (content.includes("Alice") && question.toLowerCase().includes("white rabbit")) {
-    return "The White Rabbit in Alice in Wonderland represents time consciousness and serves as Alice's guide into Wonderland. He appears worried about being late, carrying a pocket watch, and wearing a waistcoat, which contrasts with Alice's carefree attitude and draws her curiosity, leading her to follow him down the rabbit hole.";
-  } else if (content.includes("Alice") && question.toLowerCase().includes("fall")) {
-    return "Alice's fall down the rabbit hole symbolizes her transition from the rational, ordered world of Victorian England into the chaotic, nonsensical realm of Wonderland. The slow descent gives her time to observe and contemplate, representing a gradual shift in perspective rather than an abrupt change.";
+  // Extract key terms from the question, excluding question words
+  const questionTerms = cleanQuestion
+    .split(/\s+/)
+    .filter(term => 
+      term.length > 2 && 
+      !stopWords.has(term) && 
+      !['what', 'who', 'why', 'how', 'when', 'where'].includes(term)
+    );
+  
+  // Split content into paragraphs and sentences
+  const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim());
+  const sentences = content.split(/[.!?]+/).filter(s => s.trim());
+  
+  // Score sentences based on multiple factors
+  const scoredSentences = sentences.map(sentence => {
+    const cleanSentence = sentence.toLowerCase().replace(/[^\w\s]/g, ' ');
+    let score = 0;
+    
+    // Term matching with proximity bonus
+    questionTerms.forEach(term => {
+      if (cleanSentence.includes(term)) {
+        score += 2;
+        // Boost score if terms appear close together
+        const termPositions = questionTerms
+          .filter(t => cleanSentence.includes(t))
+          .map(t => cleanSentence.indexOf(t));
+        if (termPositions.length > 1) {
+          const maxDistance = Math.max(...termPositions) - Math.min(...termPositions);
+          score += 1 / (maxDistance + 1) * 2;
+        }
+      }
+    });
+    
+    // Context-based scoring
+    if (context.currentChapter) {
+      const chapterTerms = context.currentChapter.toLowerCase().split(/\s+/);
+      chapterTerms.forEach(term => {
+        if (cleanSentence.includes(term) && term.length > 3) score += 0.5;
+      });
+    }
+    
+    // Theme and genre scoring
+    if (context.bookMetadata?.themes) {
+      context.bookMetadata.themes.forEach(theme => {
+        const themeTerms = theme.toLowerCase().split(/\s+/);
+        themeTerms.forEach(term => {
+          if (cleanSentence.includes(term) && term.length > 3) score += 1.5;
+        });
+      });
+    }
+    
+    if (context.bookMetadata?.genre) {
+      context.bookMetadata.genre.forEach(genre => {
+        const genreTerms = genre.toLowerCase().split(/\s+/);
+        genreTerms.forEach(term => {
+          if (cleanSentence.includes(term) && term.length > 3) score += 1;
+        });
+      });
+    }
+    
+    // Question type specific scoring
+    if (questionTypes.character && 
+        /\b[A-Z][a-z]+\b/.test(sentence)) score += 1.5; // Proper nouns for character questions
+    if (questionTypes.theme && 
+        context.bookMetadata?.themes?.some(theme => 
+          cleanSentence.includes(theme.toLowerCase())
+        )) score += 2;
+    if (questionTypes.where && 
+        /\b(at|in|on|near|by)\b.*\b[A-Z][a-z]+\b/.test(sentence)) score += 1.5; // Location descriptions
+    
+    // Consider surrounding context
+    const sentenceIndex = sentences.indexOf(sentence);
+    const hasContext = sentenceIndex > 0 && sentenceIndex < sentences.length - 1;
+    if (hasContext) score += 0.5;
+    
+    return { sentence, score, index: sentenceIndex };
+  });
+  
+  // Sort sentences by score and select top relevant ones
+  scoredSentences.sort((a, b) => b.score - a.score);
+  let relevantSentences = scoredSentences
+    .slice(0, 3)
+    .sort((a, b) => a.index - b.index) // Restore original order
+    .map(s => s.sentence.trim());
+  
+  // If no good matches found
+  if (relevantSentences.length === 0 || scoredSentences[0].score < 1) {
+    if (questionTypes.theme && context.bookMetadata?.themes) {
+      return `While I don't find a direct discussion of themes in this section, this book explores themes like ${context.bookMetadata.themes.join(', ')}. You might want to read further to see how these themes develop.`;
+    }
+    return "I don't find a direct answer to your question in the current section. Try rephrasing your question or checking other parts of the book.";
   }
   
-  // Common questions about Moby Dick
-  else if (content.includes("Ishmael") && question.toLowerCase().includes("why")) {
-    return "Ishmael goes to sea as a way to combat depression and suicidal thoughts. He states that going to sea is his 'substitute for pistol and ball,' suggesting that sailing provides him with purpose and perspective when he feels overwhelmed by life on land. The ocean represents freedom and escape from societal constraints.";
-  } else if (content.includes("Ishmael") && question.toLowerCase().includes("meaning")) {
-    return "The opening line 'Call me Ishmael' is significant because it establishes the narrator's identity while also referencing the biblical Ishmael, who was an outcast. This suggests the narrator sees himself as an outsider to society. The name choice also foreshadows themes of exile, wandering, and survival that run throughout the novel.";
+  // Construct a natural response
+  let response = '';
+  
+  // Add context about location in book
+  if (context.currentChapter) {
+    response += `In ${context.currentChapter}, `;
   }
   
-  // Common questions about Pride and Prejudice
-  else if (content.includes("Bennet") && question.toLowerCase().includes("first line")) {
-    return "The famous first line 'It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife' is ironic. Austen is satirizing society's obsession with advantageous marriages. The line appears to state a universal truth but actually reveals the presumptuous attitudes of characters like Mrs. Bennet, who immediately views Mr. Bingley as a potential husband for one of her daughters.";
-  } else if (content.includes("Bennet") && question.toLowerCase().includes("marriage")) {
-    return "Marriage is presented as an economic and social necessity for women in this society, rather than a romantic choice. Mrs. Bennet's excitement about Mr. Bingley is entirely based on his wealth ('four or five thousand a year'), highlighting how marriage was viewed primarily as a financial arrangement. The contrast between Mr. and Mrs. Bennet's attitudes toward marriage also suggests that compatibility in temperament is important.";
-  }
-  
-  // Generic responses for other questions
-  else if (question.toLowerCase().includes("character")) {
-    return "The characters in this section are developed through their dialogue and actions. The author uses both direct description and subtle implications to reveal their personalities, motivations, and relationships. Pay attention to how they interact with each other and respond to situations, as this reveals their true nature.";
-  } else if (question.toLowerCase().includes("symbol") || question.toLowerCase().includes("metaphor")) {
-    return "This section contains several symbolic elements that contribute to the book's themes. The imagery and metaphors used by the author create layers of meaning beyond the literal narrative, inviting readers to interpret events on multiple levels. These symbols often foreshadow later developments in the story.";
-  } else if (question.toLowerCase().includes("theme")) {
-    return "Major themes introduced in this section include identity, transformation, and the relationship between appearance and reality. The author begins to explore these ideas through the characters' experiences and perspectives, establishing thematic foundations that will be developed throughout the book.";
+  // Handle different question types
+  if (questionTypes.summary) {
+    response += relevantSentences.join(' ');
+  } else if (questionTypes.theme) {
+    response += `This passage explores ${context.bookMetadata?.themes?.[0] || 'themes'} through the following: ${relevantSentences.join(' ')}`;
+  } else if (questionTypes.character) {
+    response += `The character is shown in the following context: ${relevantSentences.join(' ')}`;
+  } else if (questionTypes.analysis) {
+    response += `Analyzing this section: ${relevantSentences.join(' ')} `;
+    if (context.bookMetadata?.themes) {
+      response += `This connects to the theme of ${context.bookMetadata.themes[0]}.`;
+    }
   } else {
-    return "Based on this section of the book, I can see that your question touches on important aspects of the narrative. The text provides some insights, but a complete answer would require analyzing how this section connects to the broader themes and character development throughout the entire work.";
+    response += relevantSentences.join(' ');
   }
+  
+  // Add genre context if relevant
+  if (context.bookMetadata?.genre && questionTypes.analysis) {
+    response += ` As a ${context.bookMetadata.genre[0]} work, this passage is particularly significant.`;
+  }
+  
+  return response;
 }
 
 /**

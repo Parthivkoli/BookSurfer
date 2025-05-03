@@ -134,10 +134,11 @@ export function summarizeContent(
   options: {
     diversityFactor?: number;  // How much to prioritize diversity (0-1, default 0.5)
     preferLocation?: 'start' | 'end' | 'none';  // Prefer sentences from start/end (default none)
+    context?: string;  // Additional context about the book/current chapter
   } = {}
 ): string {
   // Set default options
-  const { diversityFactor = 0.5, preferLocation = 'none' } = options;
+  const { diversityFactor = 0.5, preferLocation = 'none', context = '' } = options;
   
   // Handle edge cases
   if (!content || typeof content !== "string") {
@@ -160,6 +161,16 @@ export function summarizeContent(
 
   // Calculate word importance using TF-IDF inspired approach
   const wordImportance = calculateWordImportance(sentences);
+
+  // Add context importance if provided
+  if (context) {
+    const contextWords = context.toLowerCase().match(/\b\w+\b/g) || [];
+    contextWords.forEach(word => {
+      if (!stopWords.has(word)) {
+        wordImportance[word] = (wordImportance[word] || 0) + 2; // Boost context words
+      }
+    });
+  }
 
   // Initial scoring of sentences
   const initialScores: SentenceScore[] = sentences.map((sentence, index) => {

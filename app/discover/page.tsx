@@ -146,14 +146,20 @@ export default function DiscoverPage() {
 
         // Sorting
         let sortedResults = [...allResults];
-        if (sortBy === "title") {
-          sortedResults.sort((a, b) => a.title.localeCompare(b.title));
-        } else if (sortBy === "date") {
-          sortedResults.sort((a, b) => (b.publishedDate ?? "").localeCompare(a.publishedDate ?? ""));
-        } else if (sortBy === "rating") {
-          sortedResults.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-        }
-
+        // Always put Gutenberg books at the top
+        sortedResults.sort((a, b) => {
+          if (a.source === 'gutenberg' && b.source !== 'gutenberg') return -1;
+          if (a.source !== 'gutenberg' && b.source === 'gutenberg') return 1;
+          // fallback to other sort
+          if (sortBy === "title") {
+            return a.title.localeCompare(b.title);
+          } else if (sortBy === "date") {
+            return (b.publishedDate ?? "").localeCompare(a.publishedDate ?? "");
+          } else if (sortBy === "rating") {
+            return (b.rating ?? 0) - (a.rating ?? 0);
+          }
+          return 0;
+        });
         setResults(sortedResults);
         setTotalPages(Math.ceil(totalItems / booksPerPage) || 1);
       } catch (error) {

@@ -28,6 +28,8 @@ export interface Book {
   pdfUrl?: string; // For papers
   chapters?: { title: string; content: string }[]; // For novels
   rating?: number;
+  // For Gutenberg: all available formats (internal use)
+  formats?: Record<string, string>;
 }
 
 /**

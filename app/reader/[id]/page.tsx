@@ -1,16 +1,15 @@
 import { getBookById, getBookContent } from "@/lib/api/books";
 import ReaderClient from "./ReaderClient";
 import { Book } from "@/types/book";
+import { notFound } from "next/navigation";
 
 // Define the props type to match Next.js's expectation
 interface PageProps {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }
 
 export default async function ReaderPage({ params }: PageProps) {
-  // Await the params Promise to get the resolved { id: string }
-  const resolvedParams = await params;
-  const bookId = resolvedParams.id;
+  const bookId = params.id;
 
   // Fetch initial data for the book
   async function fetchInitialData(): Promise<{ book: Book | null; content: string | null }> {
@@ -32,15 +31,18 @@ export default async function ReaderPage({ params }: PageProps) {
 
   const { book, content } = await fetchInitialData();
 
+  // If book is not found, show 404 page
+  if (!book) {
+    notFound();
+  }
+
   return (
     <div className="min-h-screen flex flex-col">
-      {book ? (
-        <ReaderClient initialBook={book} initialContent={content || ""} bookId={bookId} />
-      ) : (
-        <div className="flex-1 flex items-center justify-center">
-          <p className="text-muted-foreground">Book not found or content unavailable.</p>
-        </div>
-      )}
+      <ReaderClient 
+        initialBook={book} 
+        initialContent={content || ""} 
+        bookId={bookId} 
+      />
     </div>
   );
 }

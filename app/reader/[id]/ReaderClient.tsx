@@ -98,12 +98,10 @@ export default function ReaderClient({
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [pageInput, setPageInput] = useState("");
   const [speechRate, setSpeechRate] = useState(1);
-  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(
-    null
-  );
+  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null);
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [currentWordIndex, setCurrentWordIndex] = useState<number>(-1);
-  const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [utteranceRef, setUtteranceRef] = useState<SpeechSynthesisUtterance | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
@@ -115,120 +113,38 @@ export default function ReaderClient({
   const [wordDefinition, setWordDefinition] = useState("");
   const [highContrast, setHighContrast] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [aiHistory, setAiHistory] = useState<
-    { question: string; answer: string }[]
-  >([]);
-  const [definitionPosition, setDefinitionPosition] = useState<{
-    left: number;
-    top: number;
-  } | null>(null);
+  const [aiHistory, setAiHistory] = useState<{ question: string; answer: string }[]>([]);
+  const [definitionPosition, setDefinitionPosition] = useState<{ left: number; top: number } | null>(null);
+  const [readingDirection, setReadingDirection] = useState<"vertical" | "horizontal">(
+    () => (localStorage.getItem("reader-direction") as "vertical" | "horizontal") || "vertical"
+  );
+  const [showDirectionModal, setShowDirectionModal] = useState(!localStorage.getItem("reader-direction"));
+  const [verticalPage, setVerticalPage] = useState(1);
+  const [showPageJump, setShowPageJump] = useState(false);
+  const [jumpPageValue, setJumpPageValue] = useState(1);
+  const [loadedPageCount, setLoadedPageCount] = useState(3);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  // **Dynamic Pagination**
+  // Dynamic Pagination
   useEffect(() => {
-    const paginateContent = () => {
-      if (!initialContent) {
-        setContentPages(["No content available."]);
-        return;
-      }
+    if (!initialContent) {
+      setContentPages(["No content available."]);
+      return;
+    }
+    const pages = paginateByWords(initialContent, 400);
+    setContentPages(pages);
+    setBookProgress(Math.round(((currentPage + 1) / pages.length) * 100));
+    const avgReadingSpeed = 250;
+    const wordsLeft = (pages.length - currentPage - 1) * 400;
+    const minutesLeft = Math.ceil(wordsLeft / avgReadingSpeed);
+    setEstimatedTimeLeft(
+      minutesLeft < 60
+        ? `~${minutesLeft} min left`
+        : `~${Math.floor(minutesLeft / 60)}h ${minutesLeft % 60}m left`
+    );
+  }, [initialContent, fontSize, lineHeight, fontFamily, isFullScreen, currentPage, marginSize]);
 
-      const containerHeight = window.innerHeight - (isFullScreen ? 100 : 220);
-      const paragraphs = initialContent
-        .split("\n\n")
-        .filter((p) => p.trim())
-        .map((p) => p.replace(/\s+/g, " ").trim());
-
-      const pages: string[] = [];
-      let currentPageContent = "";
-
-      const tempDiv = document.createElement("div");
-      tempDiv.style.fontSize = `${fontSize}px`;
-      tempDiv.style.lineHeight = `${lineHeight}`;
-      tempDiv.style.fontFamily = fontFamily;
-      tempDiv.style.padding = "2rem";
-      tempDiv.style.maxWidth = "70ch";
-      tempDiv.style.position = "absolute";
-      tempDiv.style.visibility = "hidden";
-      document.body.appendChild(tempDiv);
-
-      for (const paragraph of paragraphs) {
-        const testContent = currentPageContent
-          ? `${currentPageContent}\n\n${paragraph}`
-          : paragraph;
-        tempDiv.innerHTML = `<div>${testContent
-          .split("\n\n")
-          .map((p) => `<p>${p}</p>`)
-          .join("")}</div>`;
-
-        if (tempDiv.offsetHeight <= containerHeight) {
-          currentPageContent = testContent;
-        } else {
-          if (currentPageContent) {
-            pages.push(currentPageContent);
-            currentPageContent = paragraph;
-          } else {
-            const words = paragraph.split(" ");
-            let partialParagraph = "";
-
-            for (const word of words) {
-              const testPartial = partialParagraph
-                ? `${partialParagraph} ${word}`
-                : word;
-              tempDiv.innerHTML = `<p>${testPartial}</p>`;
-
-              if (tempDiv.offsetHeight <= containerHeight) {
-                partialParagraph = testPartial;
-              } else {
-                if (partialParagraph) {
-                  pages.push(partialParagraph);
-                  partialParagraph = word;
-                } else {
-                  pages.push(word);
-                  partialParagraph = "";
-                }
-              }
-            }
-
-            if (partialParagraph) currentPageContent = partialParagraph;
-          }
-        }
-      }
-
-      if (currentPageContent) pages.push(currentPageContent);
-      document.body.removeChild(tempDiv);
-      setContentPages(pages.length > 0 ? pages : ["No content available."]);
-
-      const wordsPerPage = pages[0]?.split(/\s+/).length || 200;
-      const totalWords = pages.reduce(
-        (total, page) => total + page.split(/\s+/).length,
-        0
-      );
-      const pagesLeft = pages.length - currentPage - 1;
-      const wordsLeft = pagesLeft * wordsPerPage;
-      const avgReadingSpeed = 250;
-      const minutesLeft = Math.ceil(wordsLeft / avgReadingSpeed);
-
-      setBookProgress(Math.round(((currentPage + 1) / pages.length) * 100));
-      setEstimatedTimeLeft(
-        minutesLeft < 60
-          ? `~${minutesLeft} min left`
-          : `~${Math.floor(minutesLeft / 60)}h ${minutesLeft % 60}m left`
-      );
-    };
-
-    paginateContent();
-    window.addEventListener("resize", paginateContent);
-    return () => window.removeEventListener("resize", paginateContent);
-  }, [
-    initialContent,
-    fontSize,
-    lineHeight,
-    fontFamily,
-    isFullScreen,
-    currentPage,
-    marginSize,
-  ]);
-
-  // **Load Saved State**
+  // Load Saved State
   useEffect(() => {
     const loadSavedState = () => {
       try {
@@ -237,9 +153,7 @@ export default function ReaderClient({
 
         const savedProgress = localStorage.getItem(`progress-${bookId}`);
         if (savedProgress)
-          setCurrentPage(
-            Math.min(parseInt(savedProgress, 10), contentPages.length - 1) || 0
-          );
+          setCurrentPage(Math.min(parseInt(savedProgress, 10), contentPages.length - 1) || 0);
 
         const savedFontSize = localStorage.getItem("reader-font-size");
         if (savedFontSize) setFontSize(parseInt(savedFontSize, 10));
@@ -266,7 +180,7 @@ export default function ReaderClient({
     if (contentPages.length > 0) loadSavedState();
   }, [bookId, contentPages.length]);
 
-  // **Save Preferences**
+  // Save Preferences
   useEffect(() => {
     if (book && currentPage >= 0) {
       localStorage.setItem(`progress-${bookId}`, currentPage.toString());
@@ -277,19 +191,9 @@ export default function ReaderClient({
       localStorage.setItem("reader-theme", readingMode);
       localStorage.setItem("reader-high-contrast", highContrast.toString());
     }
-  }, [
-    book,
-    bookId,
-    currentPage,
-    fontSize,
-    lineHeight,
-    fontFamily,
-    marginSize,
-    readingMode,
-    highContrast,
-  ]);
+  }, [book, bookId, currentPage, fontSize, lineHeight, fontFamily, marginSize, readingMode, highContrast]);
 
-  // **Theme and Contrast**
+  // Theme and Contrast
   useEffect(() => {
     if (readingMode === "system") setTheme("system");
     else if (readingMode === "dark") setTheme("dark");
@@ -298,7 +202,7 @@ export default function ReaderClient({
     document.documentElement.classList.toggle("high-contrast", highContrast);
   }, [readingMode, highContrast, setTheme]);
 
-  // **Fullscreen Handling**
+  // Fullscreen Handling
   const toggleFullScreen = () => {
     if (!isFullScreen)
       document.documentElement.requestFullscreen().catch(console.error);
@@ -314,11 +218,10 @@ export default function ReaderClient({
       }
     };
     document.addEventListener("fullscreenchange", handleFullScreenChange);
-    return () =>
-      document.removeEventListener("fullscreenchange", handleFullScreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullScreenChange);
   }, []);
 
-  // **Auto-Hide Controls in Fullscreen**
+  // Auto-Hide Controls in Fullscreen
   useEffect(() => {
     const handleScroll = () => {
       if (!isFullScreen) return;
@@ -331,7 +234,7 @@ export default function ReaderClient({
     return () => window.removeEventListener("scroll", handleScroll);
   }, [isFullScreen, lastScrollY]);
 
-  // **Text-to-Speech Voices**
+  // Text-to-Speech Voices
   useEffect(() => {
     const loadVoices = () => {
       const availableVoices = window.speechSynthesis.getVoices();
@@ -353,7 +256,7 @@ export default function ReaderClient({
     };
   }, [selectedVoice]);
 
-  // **Page Navigation**
+  // Page Navigation
   const goToNextPage = () => {
     if (currentPage < contentPages.length - 1) {
       setPageTransition(true);
@@ -399,7 +302,7 @@ export default function ReaderClient({
     }
   };
 
-  // **Bookmark Toggle**
+  // Bookmark Toggle
   const toggleBookmark = () => {
     const newBookmarks = [...bookmarks];
     const index = newBookmarks.indexOf(currentPage);
@@ -423,7 +326,7 @@ export default function ReaderClient({
     localStorage.setItem(`bookmarks-${bookId}`, JSON.stringify(newBookmarks));
   };
 
-  // **AI Summary**
+  // AI Summary
   const summarizeContent = (content: string, maxSentences = 3): string => {
     const sentences = content.split(/[.!?]+/).filter((s) => s.trim());
     return sentences.slice(0, maxSentences).join(". ") + ".";
@@ -439,7 +342,7 @@ export default function ReaderClient({
     }, 1000);
   };
 
-  // **AI Question Answering**
+  // AI Question Answering
   const generateAnswer = (
     content: string,
     question: string,
@@ -468,7 +371,7 @@ export default function ReaderClient({
       let score = 0;
       for (const word of questionWords) {
         if (sentence.includes(word)) {
-          score += 1 + (sentence.split(word).length - 1); // Bonus for multiple occurrences
+          score += 1 + (sentence.split(word).length - 1);
         }
       }
       if (score > highestScore && score > 0) {
@@ -493,7 +396,7 @@ export default function ReaderClient({
       return `${intent}${responseSentences.join(". ")}.`;
     }
 
-    return `I couldn’t find a direct answer, but here’s some related information from the page: ${sentences
+    return `I couldn't find a direct answer, but here's some related information from the page: ${sentences
       .slice(0, maxSentences)
       .join(". ")}.`;
   };
@@ -512,37 +415,29 @@ export default function ReaderClient({
     setTimeout(() => {
       const result = generateAnswer(contentPages[currentPage], question, 2);
       setAnswer(result);
-      setAiHistory((prev) => [...prev.slice(-4), { question, answer: result }]); // Keep last 5
+      setAiHistory((prev) => [...prev.slice(-4), { question, answer: result }]);
       setAnswerLoading(false);
     }, 1200);
   };
 
-  // **Text-to-Speech**
-  const startTextToSpeech = () => {
+  // Improved Text-to-Speech with Highlighting and Start Position
+  const startTextToSpeech = (startIndex = 0) => {
     if (!contentPages[currentPage] || isPlaying) return;
     window.speechSynthesis.cancel();
     const text = contentPages[currentPage];
-    const wordMatches = Array.from(text.matchAll(/\S+/g));
-    const wordStarts = wordMatches.map((match) => match.index!);
-    const utterance = new SpeechSynthesisUtterance(text);
+    const words = text.split(/\s+/);
+    const utterance = new SpeechSynthesisUtterance(words.slice(startIndex).join(" "));
     utterance.rate = speechRate;
     if (selectedVoice) utterance.voice = selectedVoice;
 
+    let wordIndex = startIndex;
     utterance.onboundary = (event) => {
-      if (event.name === "word" && event.charIndex !== undefined) {
-        const charIndex = event.charIndex;
-        const wordIndex = wordStarts.findIndex(
-          (start, i) =>
-            start <= charIndex &&
-            (i === wordStarts.length - 1 || wordStarts[i + 1] > charIndex)
-        );
-        if (wordIndex >= 0) {
-          setCurrentWordIndex(wordIndex);
-          const wordElement =
-            contentRef.current?.querySelectorAll(".word")[wordIndex];
-          if (wordElement)
-            wordElement.scrollIntoView({ behavior: "smooth", block: "center" });
-        }
+      if (event.name === "word") {
+        setCurrentWordIndex(wordIndex);
+        const wordElement = contentRef.current?.querySelectorAll(".word")[wordIndex];
+        if (wordElement)
+          wordElement.scrollIntoView({ behavior: "smooth", block: "center" });
+        wordIndex++;
       }
     };
 
@@ -566,7 +461,7 @@ export default function ReaderClient({
     };
 
     window.speechSynthesis.speak(utterance);
-    utteranceRef.current = utterance;
+    setUtteranceRef(utterance);
     setIsPlaying(true);
     toast({
       title: "Reading Started",
@@ -588,7 +483,7 @@ export default function ReaderClient({
   };
 
   const resumeTextToSpeech = () => {
-    if (!isPlaying && utteranceRef.current) {
+    if (!isPlaying && utteranceRef) {
       window.speechSynthesis.resume();
       setIsPlaying(true);
       toast({
@@ -600,21 +495,24 @@ export default function ReaderClient({
   };
 
   const stopTextToSpeech = () => {
-    if (isPlaying || utteranceRef.current) {
+    if (isPlaying || utteranceRef) {
       window.speechSynthesis.cancel();
       setIsPlaying(false);
       setCurrentWordIndex(-1);
-      utteranceRef.current = null;
+      setUtteranceRef(null);
     }
   };
 
-  // **Keyboard Navigation**
+  // Click-to-Start TTS
+  const handleWordClick = (index: number) => {
+    stopTextToSpeech();
+    startTextToSpeech(index);
+  };
+
+  // Keyboard Navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement
-      )
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)
         return;
       if (e.key === "ArrowRight" || e.key === "j") goToNextPage();
       else if (e.key === "ArrowLeft" || e.key === "k") goToPrevPage();
@@ -626,7 +524,7 @@ export default function ReaderClient({
         e.preventDefault();
         isPlaying
           ? pauseTextToSpeech()
-          : utteranceRef.current
+          : utteranceRef
           ? resumeTextToSpeech()
           : startTextToSpeech();
       } else if (e.ctrlKey && e.key === "/") {
@@ -639,7 +537,7 @@ export default function ReaderClient({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [currentPage, contentPages.length, isPlaying, isFullScreen]);
 
-  // **Dictionary Functionality**
+  // Dictionary Functionality
   const getWordDefinition = async (
     word: string,
     e: React.MouseEvent<HTMLSpanElement>
@@ -670,16 +568,10 @@ export default function ReaderClient({
       }
 
       const data = await response.json();
-      if (
-        data &&
-        data.length > 0 &&
-        data[0].meanings &&
-        data[0].meanings.length > 0
-      ) {
+      if (data && data.length > 0 && data[0].meanings && data[0].meanings.length > 0) {
         const meaning = data[0].meanings[0];
         const definition =
-          meaning.definitions[0].definition ||
-          "No definition available for this meaning.";
+          meaning.definitions[0].definition || "No definition available for this meaning.";
         const example = meaning.definitions[0].example
           ? `\nExample: ${meaning.definitions[0].example}`
           : "";
@@ -699,13 +591,13 @@ export default function ReaderClient({
     }
   };
 
-  // **Utility Functions**
+  // Utility Functions
   const getMarginClass = () => {
     switch (marginSize) {
       case "small":
-        return "px-2 sm:px-4";
+        return "px-4 sm:px-6";
       case "large":
-        return "px-12 md:px-24";
+        return "px-12 md:px-20";
       default:
         return "px-8 md:px-16";
     }
@@ -719,6 +611,75 @@ export default function ReaderClient({
         return "font-mono";
       default:
         return "font-serif";
+    }
+  };
+
+  function paginateByWords(content: string, wordsPerPage = 400): string[] {
+    const words = content.split(/\s+/);
+    const pages: string[] = [];
+    for (let i = 0; i < words.length; i += wordsPerPage) {
+      pages.push(words.slice(i, i + wordsPerPage).join(" "));
+    }
+    return pages.length ? pages : ["No content available."];
+  }
+
+  // Infinite Scroll for Vertical Mode
+  useEffect(() => {
+    if (readingDirection !== "vertical") return;
+    const handleScroll = () => {
+      const pages = document.querySelectorAll(".reader-page");
+      let page = 1;
+      for (let i = 0; i < pages.length; i++) {
+        const rect = pages[i].getBoundingClientRect();
+        if (rect.top > 60) {
+          page = i + 1;
+          break;
+        }
+      }
+      setVerticalPage(page);
+
+      if (
+        window.innerHeight + window.scrollY >= document.body.offsetHeight - 300 &&
+        loadedPageCount < contentPages.length &&
+        !isLoadingMore
+      ) {
+        setIsLoadingMore(true);
+        const nextBatch = Math.min(loadedPageCount + 5, contentPages.length);
+        setLoadedPageCount(nextBatch);
+        setIsLoadingMore(false);
+      }
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [readingDirection, contentPages.length, loadedPageCount, isLoadingMore]);
+
+  useEffect(() => {
+    setLoadedPageCount(3);
+    setIsLoadingMore(false);
+  }, [initialContent, readingDirection]);
+
+  const totalPages = contentPages.length;
+
+  const handlePageJumpVertical = (pageNum: number) => {
+    if (pageNum >= 1 && pageNum <= totalPages) {
+      if (loadedPageCount < pageNum) {
+        setLoadedPageCount(pageNum);
+        setTimeout(() => {
+          const pages = document.querySelectorAll(".reader-page");
+          const target = pages[pageNum - 1];
+          if (target) {
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 100);
+      } else {
+        const pages = document.querySelectorAll(".reader-page");
+        const target = pages[pageNum - 1];
+        if (target) {
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+      }
+      setShowPageJump(false);
     }
   };
 
@@ -741,7 +702,7 @@ export default function ReaderClient({
             <BookOpen className="h-16 w-16 mx-auto mb-6 text-primary opacity-80" />
             <h1 className="text-2xl font-bold mb-4">Book Not Found</h1>
             <p className="text-muted-foreground mb-8">
-              We couldn&apos;t find the book you&apos;re looking for.
+              We couldn't find the book you're looking for.
             </p>
             <Button
               onClick={() => router.push("/discover")}
@@ -769,17 +730,16 @@ export default function ReaderClient({
       >
         {/* Header */}
         {!isFullScreen && (
-          <div className="flex justify-center items-center p-4 bg-white dark:bg-gray-800 shadow-md">
+          <div className="flex justify-between items-center p-4 bg-white dark:bg-gray-800 shadow-md md:px-8">
             <Button
               variant="ghost"
               size="icon"
               onClick={() => setIsMobileMenuOpen(true)}
+              className="md:hidden"
             >
               <Menu className="h-6 w-6" />
             </Button>
-            <h1 className="text-xl font-bold mx-auto text-center">
-              {book.title}
-            </h1>
+            <h1 className="text-xl font-bold text-center flex-1">{book.title}</h1>
             <div className="flex space-x-2">
               <Button variant="outline" size="icon" onClick={toggleBookmark}>
                 <Bookmark className="h-5 w-5" />
@@ -805,10 +765,7 @@ export default function ReaderClient({
               <SheetTitle>Menu</SheetTitle>
             </SheetHeader>
             <div className="py-6 space-y-4">
-              <Button
-                variant="ghost"
-                onClick={() => router.push("/discover")}
-              >
+              <Button variant="ghost" onClick={() => router.push("/discover")}>
                 Discover
               </Button>
               <Button variant="ghost" onClick={() => router.push("/library")}>
@@ -828,94 +785,146 @@ export default function ReaderClient({
         <div
           ref={mainContentRef}
           className={`flex-1 flex flex-col items-center ${
-            isFullScreen ? "p-0" : "py-4 sm:py-8"
-          }`}
+            isFullScreen ? "p-0" : "py-6 sm:py-10"
+          } ${!isFullScreen ? "pb-20 md:pb-24" : ""}`}
         >
           <div
-            className={`w-full max-w-4xl mx-auto ${
+            className={`w-full max-w-3xl mx-auto ${
               isFullScreen ? "h-screen" : "min-h-[70vh]"
             } ${getMarginClass()}`}
           >
-            <div className="w-full bg-gray-200 dark:bg-gray-800 h-1 mb-4">
-              <div
-                className="h-full bg-primary transition-all"
-                style={{ width: `${bookProgress}%` }}
-              />
-            </div>
-            <motion.div
-              className="bg-white dark:bg-gray-900 rounded-lg shadow-md"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.5 }}
-            >
-              <div
-                ref={contentRef}
-                className={`py-6 sm:py-8 ${getFontFamilyClass()} prose dark:prose-invert prose-neutral`}
-                style={{
-                  fontSize: `clamp(14px, 4vw, ${fontSize}px)`,
-                  lineHeight: lineHeight,
-                }}
-              >
-                {contentPages[currentPage]?.split("\n\n").map((paragraph, pIndex) => (
-                  <p key={pIndex} className="mb-4">
-                    {paragraph.split(/\s+/).map((word, wIndex) => {
-                      const globalWordIndex =
-                        contentPages[currentPage]
-                          .split(/\s+/)
-                          .slice(0, wIndex + 1).length - 1;
-                      return (
-                        <span
-                          key={wIndex}
-                          className={`word cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 ${
-                            currentWordIndex === globalWordIndex
-                              ? "bg-yellow-200"
-                              : ""
-                          }`}
-                          onClick={(e) => getWordDefinition(word, e)}
-                        >
-                          {word}{" "}
-                        </span>
-                      );
-                    })}
+            {showDirectionModal && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60">
+                <div className="bg-white dark:bg-gray-800 rounded-lg p-8 max-w-xs w-full text-center shadow-lg">
+                  <h2 className="text-lg font-bold mb-2">Setting for the first time...</h2>
+                  <p className="mb-4 text-sm text-muted-foreground">
+                    Select the reading mode you want. You can re-config in <b>Settings &gt; Reading Mode</b>
                   </p>
-                ))}
+                  <div className="space-y-3">
+                    <Button
+                      className="w-full flex items-center justify-center"
+                      onClick={() => {
+                        setReadingDirection("vertical");
+                        localStorage.setItem("reader-direction", "vertical");
+                        setShowDirectionModal(false);
+                      }}
+                    >
+                      <span className="mr-2">📖</span> Vertical Follow
+                    </Button>
+                    <Button
+                      className="w-full flex items-center justify-center"
+                      onClick={() => {
+                        setReadingDirection("horizontal");
+                        localStorage.setItem("reader-direction", "horizontal");
+                        setShowDirectionModal(false);
+                      }}
+                    >
+                      <span className="mr-2">📚</span> Horizontal Follow
+                    </Button>
+                  </div>
+                </div>
               </div>
-            </motion.div>
-            <motion.div
-              className={`flex justify-between items-center w-full mt-4 ${
-                isFullScreen ? "fixed bottom-4 left-0 right-0 px-4 sm:px-8" : ""
-              }`}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: controlsVisible ? 1 : 0 }}
-              exit={{ opacity: 0 }}
-            >
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-12 w-12"
-                onClick={goToPrevPage}
-                disabled={currentPage <= 0}
-              >
-                <ChevronLeft className="h-6 w-6" />
-              </Button>
-              <Input
-                type="number"
-                value={pageInput}
-                onChange={(e) => setPageInput(e.target.value)}
-                placeholder={`${currentPage + 1}`}
-                className="w-16 sm:w-20 text-center border-none"
-                onKeyPress={(e) => e.key === "Enter" && handlePageJump()}
-              />
-              <Button
-                variant="outline"
-                size="icon"
-                className="h-12 w-12"
-                onClick={goToNextPage}
-                disabled={currentPage >= contentPages.length - 1}
-              >
-                <ChevronRight className="h-6 w-6" />
-              </Button>
-            </motion.div>
+            )}
+            {readingDirection === "vertical" ? (
+              <>
+                <div
+                  className={`prose dark:prose-invert prose-neutral py-6 sm:py-8 ${getFontFamilyClass()}`}
+                  style={{ fontSize: `clamp(14px, 4vw, ${fontSize}px)`, lineHeight }}
+                >
+                  {contentPages.slice(0, loadedPageCount).map((page, idx) => (
+                    <div key={idx} className="reader-page mb-12 pb-8 border-b border-gray-200 dark:border-gray-700 relative">
+                      {page.split(/\n\s*\n/).map((paragraph, pIndex) =>
+                        paragraph.trim() ? (
+                          <p key={pIndex} className="mb-4">
+                            {paragraph.split(/\s+/).map((word, wIndex) => (
+                              <span
+                                key={wIndex}
+                                className={`word cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 ${
+                                  currentWordIndex === wIndex ? "bg-yellow-200" : ""
+                                }`}
+                                onClick={() => handleWordClick(wIndex)}
+                              >
+                                {word}{" "}
+                              </span>
+                            ))}
+                          </p>
+                        ) : null
+                      )}
+                      <div className="absolute right-4 bottom-2 text-xs text-muted-foreground select-none opacity-60">
+                        Page {idx + 1}
+                      </div>
+                    </div>
+                  ))}
+                  {loadedPageCount === contentPages.length && (
+                    <div className="text-center py-12">
+                      <div className="text-lg font-semibold text-primary mb-2">Book finished 🎉</div>
+                      <p className="text-sm text-muted-foreground">You've reached the end of the book</p>
+                    </div>
+                  )}
+                </div>
+                {!isFullScreen && (
+                  <div className="hidden md:flex fixed bottom-0 left-0 w-full z-40 bg-background/95 backdrop-blur border-t border-border py-4 px-8 items-center justify-between gap-4" style={{ minHeight: 64 }}>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="shadow-md"
+                      onClick={() => {
+                        setJumpPageValue(readingDirection === "vertical" ? verticalPage : currentPage + 1);
+                        setShowPageJump(true);
+                      }}
+                    >
+                      <ChevronUp className="h-4 w-4 mr-1" /> Jump to Page
+                    </Button>
+                    <div className="flex gap-4 items-center mx-auto">
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        disabled={readingDirection === "vertical" ? verticalPage <= 1 : currentPage <= 0}
+                        onClick={() => {
+                          if (readingDirection === "vertical") handlePageJumpVertical(verticalPage - 1);
+                          else setCurrentPage(currentPage - 1);
+                        }}
+                      >
+                        <ChevronLeft className="h-5 w-5 mr-1" /> Prev
+                      </Button>
+                      <span className="text-sm text-muted-foreground select-none">
+                        Page {readingDirection === "vertical" ? verticalPage : currentPage + 1} of {contentPages.length}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="lg"
+                        disabled={readingDirection === "vertical" ? verticalPage >= contentPages.length : currentPage >= contentPages.length - 1}
+                        onClick={() => {
+                          if (readingDirection === "vertical") handlePageJumpVertical(verticalPage + 1);
+                          else setCurrentPage(currentPage + 1);
+                        }}
+                      >
+                        Next <ChevronRight className="h-5 w-5 ml-1" />
+                      </Button>
+                    </div>
+                    <div style={{ width: 120 }} />
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <HorizontalSwipePage
+                  currentPage={currentPage}
+                  setCurrentPage={setCurrentPage}
+                  contentPages={contentPages}
+                  contentRef={contentRef}
+                  getFontFamilyClass={getFontFamilyClass}
+                  fontSize={fontSize}
+                  lineHeight={lineHeight}
+                  getWordDefinition={getWordDefinition}
+                  currentWordIndex={currentWordIndex}
+                  handleWordClick={handleWordClick}
+                />
+                {currentPage === contentPages.length - 1 && (
+                  <div className="text-center text-lg font-semibold text-primary mt-12 mb-24">Book finished 🎉</div>
+                )}
+              </>
+            )}
           </div>
         </div>
 
@@ -959,7 +968,7 @@ export default function ReaderClient({
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 100 }}
               transition={{ duration: 0.3 }}
-              className="fixed right-6 top-16 bottom-16 w-80 bg-white dark:bg-gray-800 shadow-lg rounded-md overflow-hidden flex flex-col"
+              className="fixed right-6 top-16 bottom-16 w-80 bg-white dark:bg-gray-800 shadow-lg rounded-md overflow-hidden flex flex-col md:w-96"
             >
               <div className="p-3 border-b dark:border-gray-700 flex justify-between items-center">
                 <h3 className="text-sm font-medium">AI Reading Assistant</h3>
@@ -971,43 +980,27 @@ export default function ReaderClient({
                   <ChevronRight className="h-5 w-5" />
                 </Button>
               </div>
-
-              <Tabs
-                defaultValue="summary"
-                className="flex-1 overflow-hidden flex flex-col"
-              >
+              <Tabs defaultValue="summary" className="flex-1 overflow-hidden flex flex-col">
                 <TabsList className="w-full justify-start px-3 pt-2">
                   <TabsTrigger value="summary" className="flex-1">
                     Summary
                   </TabsTrigger>
-                  <TabsTrigger
-                    value="ask"
-                    className="flex-1 tooltip"
-                    data-tooltip="Ctrl + / to focus"
-                  >
+                  <TabsTrigger value="ask" className="flex-1 tooltip" data-tooltip="Ctrl + / to focus">
                     Ask AI
                   </TabsTrigger>
                 </TabsList>
-
-                <TabsContent
-                  value="summary"
-                  className="flex-1 overflow-y-auto p-3 space-y-3"
-                >
+                <TabsContent value="summary" className="flex-1 overflow-y-auto p-3 space-y-3">
                   <p className="text-sm text-muted-foreground">
                     Get an AI-generated summary of the current page
                   </p>
                   {summaryLoading ? (
                     <div className="flex flex-col items-center justify-center py-8">
                       <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                      <p className="mt-3 text-sm text-muted-foreground">
-                        Generating summary...
-                      </p>
+                      <p className="mt-3 text-sm text-muted-foreground">Generating summary...</p>
                     </div>
                   ) : summary ? (
                     <Card>
-                      <CardContent className="p-3 text-sm">
-                        {summary}
-                      </CardContent>
+                      <CardContent className="p-3 text-sm">{summary}</CardContent>
                       <CardFooter className="p-2 flex justify-end">
                         <Button
                           variant="ghost"
@@ -1028,9 +1021,7 @@ export default function ReaderClient({
                   ) : (
                     <div className="flex flex-col items-center justify-center py-8">
                       <BookText className="h-12 w-12 text-muted-foreground opacity-50 mb-3" />
-                      <p className="text-sm text-muted-foreground text-center">
-                        No summary generated yet
-                      </p>
+                      <p className="text-sm text-muted-foreground text-center">No summary generated yet</p>
                     </div>
                   )}
                   <Button
@@ -1041,15 +1032,10 @@ export default function ReaderClient({
                     Generate Summary
                   </Button>
                 </TabsContent>
-
-                <TabsContent
-                  value="ask"
-                  className="flex-1 overflow-hidden flex flex-col"
-                >
+                <TabsContent value="ask" className="flex-1 overflow-hidden flex flex-col">
                   <div className="flex-1 overflow-y-auto p-3 space-y-3">
                     <p className="text-sm text-muted-foreground">
-                      Ask a question about the current page (e.g., "What are the
-                      main themes?")
+                      Ask a question about the current page (e.g., "What are the main themes?")
                     </p>
                     <Textarea
                       placeholder="e.g. What are the main themes presented? Who is the protagonist?"
@@ -1057,27 +1043,18 @@ export default function ReaderClient({
                       onChange={(e) => setQuestion(e.target.value.slice(0, 200))}
                       className="min-h-20 border-gray-300 dark:border-gray-600 focus:border-primary focus:ring-primary transition-all duration-200"
                     />
-                    <p className="text-xs text-muted-foreground text-right">
-                      {question.length}/200
-                    </p>
+                    <p className="text-xs text-muted-foreground text-right">{question.length}/200</p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Try asking: What are the main themes? Who is the main
-                      character? Why does [key phrase] happen?
+                      Try asking: What are the main themes? Who is the main character? Why does [key phrase] happen?
                     </p>
                     {answerLoading ? (
                       <div className="flex flex-col items-center justify-center py-8">
                         <motion.div
                           className="rounded-full h-8 w-8 border-b-2 border-primary"
                           animate={{ rotate: 360 }}
-                          transition={{
-                            duration: 1,
-                            repeat: Infinity,
-                            ease: "linear",
-                          }}
+                          transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                         />
-                        <p className="mt-3 text-sm text-muted-foreground">
-                          Generating answer...
-                        </p>
+                        <p className="mt-3 text-sm text-muted-foreground">Generating answer...</p>
                       </div>
                     ) : answer ? (
                       <Card>
@@ -1099,11 +1076,7 @@ export default function ReaderClient({
                           >
                             <Copy className="h-4 w-4 mr-1" /> Copy
                           </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setQuestion("")}
-                          >
+                          <Button variant="ghost" size="sm" onClick={() => setQuestion("")}>
                             New Question
                           </Button>
                         </CardFooter>
@@ -1111,28 +1084,17 @@ export default function ReaderClient({
                     ) : (
                       <div className="flex flex-col items-center justify-center py-8">
                         <MessageSquare className="h-12 w-12 text-muted-foreground opacity-50 mb-3" />
-                        <p className="text-sm text-muted-foreground text-center">
-                          Ask a question to get an answer
-                        </p>
+                        <p className="text-sm text-muted-foreground text-center">Ask a question to get an answer</p>
                       </div>
                     )}
                     <div className="mt-4 p-2 bg-muted rounded-md">
-                      <h4 className="text-sm font-medium mb-2">
-                        Recent Questions
-                      </h4>
+                      <h4 className="text-sm font-medium mb-2">Recent Questions</h4>
                       {aiHistory.length > 0 ? (
                         <div className="space-y-2 max-h-20 overflow-y-auto">
                           {aiHistory.map((item, index) => (
-                            <div
-                              key={index}
-                              className="text-sm text-muted-foreground"
-                            >
-                              <p>
-                                <strong>Q:</strong> {item.question}
-                              </p>
-                              <p>
-                                <strong>A:</strong> {item.answer}
-                              </p>
+                            <div key={index} className="text-sm text-muted-foreground">
+                              <p><strong>Q:</strong> {item.question}</p>
+                              <p><strong>A:</strong> {item.answer}</p>
                               <Button
                                 variant="ghost"
                                 size="sm"
@@ -1145,9 +1107,7 @@ export default function ReaderClient({
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-muted-foreground">
-                          No recent questions.
-                        </p>
+                        <p className="text-sm text-muted-foreground">No recent questions.</p>
                       )}
                     </div>
                   </div>
@@ -1174,27 +1134,16 @@ export default function ReaderClient({
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.3 }}
-              style={{
-                position: "fixed",
-                top: definitionPosition.top,
-                left: definitionPosition.left,
-                zIndex: 1000,
-              }}
+              style={{ position: "fixed", top: definitionPosition.top, left: definitionPosition.left, zIndex: 1000 }}
               className="bg-white dark:bg-gray-800 shadow-lg rounded-md p-4 w-80 max-w-full"
             >
               <div className="flex justify-between items-center mb-2">
                 <h3 className="font-medium">{selectedWord}</h3>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowDefinitionPanel(false)}
-                >
+                <Button variant="ghost" size="sm" onClick={() => setShowDefinitionPanel(false)}>
                   <ChevronDown className="h-5 w-5" />
                 </Button>
               </div>
-              <p className="text-sm text-muted-foreground whitespace-pre-wrap">
-                {wordDefinition}
-              </p>
+              <p className="text-sm text-muted-foreground whitespace-pre-wrap">{wordDefinition}</p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1213,9 +1162,7 @@ export default function ReaderClient({
                 variant="outline"
                 size="sm"
                 onClick={() => setAiPanelOpen(!aiPanelOpen)}
-                className={`shadow-sm ${
-                  aiPanelOpen ? "bg-primary/10 text-primary" : ""
-                }`}
+                className={`shadow-sm ${aiPanelOpen ? "bg-primary/10 text-primary" : ""}`}
                 title="Toggle AI assistant"
               >
                 <BookText className="h-4 w-4 mr-2" />
@@ -1225,9 +1172,7 @@ export default function ReaderClient({
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const url = `${window.location.origin}/share/${bookId}?page=${
-                    currentPage + 1
-                  }`;
+                  const url = `${window.location.origin}/share/${bookId}?page=${currentPage + 1}`;
                   navigator.clipboard.writeText(url);
                   toast({
                     title: "Link Copied",
@@ -1251,7 +1196,7 @@ export default function ReaderClient({
             <Button
               variant="outline"
               size="icon"
-              className="fixed bottom-6 right-6 shadow-md"
+              className="fixed bottom-6 right-6 shadow-md z-50"
               title="Reading settings"
             >
               <Settings className="h-5 w-5" />
@@ -1269,9 +1214,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      readingMode === "light" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={readingMode === "light" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setReadingMode("light")}
                   >
                     <Sun className="h-4 w-4 mr-2" />
@@ -1280,9 +1223,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      readingMode === "dark" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={readingMode === "dark" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setReadingMode("dark")}
                   >
                     <Moon className="h-4 w-4 mr-2" />
@@ -1291,11 +1232,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      readingMode === "system"
-                        ? "bg-primary/10 text-primary"
-                        : ""
-                    }
+                    className={readingMode === "system" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setReadingMode("system")}
                   >
                     <Laptop className="h-4 w-4 mr-2" />
@@ -1323,9 +1260,7 @@ export default function ReaderClient({
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <h3 className="text-sm font-medium">Line Spacing</h3>
-                  <span className="text-sm font-medium">
-                    {lineHeight.toFixed(1)}
-                  </span>
+                  <span className="text-sm font-medium">{lineHeight.toFixed(1)}</span>
                 </div>
                 <Slider
                   value={[lineHeight]}
@@ -1345,9 +1280,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      fontFamily === "serif" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={fontFamily === "serif" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setFontFamily("serif")}
                   >
                     <span className="font-serif">Serif</span>
@@ -1355,9 +1288,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      fontFamily === "sans" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={fontFamily === "sans" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setFontFamily("sans")}
                   >
                     <span className="font-sans">Sans</span>
@@ -1365,9 +1296,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      fontFamily === "mono" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={fontFamily === "mono" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setFontFamily("mono")}
                   >
                     <span className="font-mono">Mono</span>
@@ -1380,9 +1309,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      marginSize === "small" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={marginSize === "small" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setMarginSize("small")}
                   >
                     Narrow
@@ -1390,9 +1317,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      marginSize === "medium" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={marginSize === "medium" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setMarginSize("medium")}
                   >
                     Medium
@@ -1400,9 +1325,7 @@ export default function ReaderClient({
                   <Button
                     variant="outline"
                     size="sm"
-                    className={
-                      marginSize === "large" ? "bg-primary/10 text-primary" : ""
-                    }
+                    className={marginSize === "large" ? "bg-primary/10 text-primary" : ""}
                     onClick={() => setMarginSize("large")}
                   >
                     Wide
@@ -1414,17 +1337,38 @@ export default function ReaderClient({
                 <Button
                   variant="outline"
                   size="sm"
-                  className={
-                    highContrast ? "bg-primary/10 text-primary" : ""
-                  }
+                  className={highContrast ? "bg-primary/10 text-primary" : ""}
                   onClick={() => setHighContrast(!highContrast)}
                 >
-                  {highContrast ? (
-                    <span>Disable High Contrast</span>
-                  ) : (
-                    <span>Enable High Contrast</span>
-                  )}
+                  {highContrast ? <span>Disable High Contrast</span> : <span>Enable High Contrast</span>}
                 </Button>
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">Reading Mode</h3>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={readingDirection === "vertical" ? "bg-primary/10 text-primary" : ""}
+                    onClick={() => {
+                      setReadingDirection("vertical");
+                      localStorage.setItem("reader-direction", "vertical");
+                    }}
+                  >
+                    Vertical Follow
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={readingDirection === "horizontal" ? "bg-primary/10 text-primary" : ""}
+                    onClick={() => {
+                      setReadingDirection("horizontal");
+                      localStorage.setItem("reader-direction", "horizontal");
+                    }}
+                  >
+                    Horizontal Follow
+                  </Button>
+                </div>
               </div>
             </div>
             <SheetFooter>
@@ -1441,7 +1385,7 @@ export default function ReaderClient({
             <Button
               variant="outline"
               size="icon"
-              className="fixed bottom-20 right-6 shadow-md"
+              className="fixed bottom-20 right-6 shadow-md z-50"
               title="Text-to-speech controls"
             >
               <Headphones className="h-5 w-5" />
@@ -1450,41 +1394,26 @@ export default function ReaderClient({
           <SheetContent>
             <SheetHeader>
               <SheetTitle>Text-to-Speech</SheetTitle>
-              <SheetDescription>
-                Customize your listening experience
-              </SheetDescription>
+              <SheetDescription>Customize your listening experience</SheetDescription>
             </SheetHeader>
             <div className="py-6 space-y-6">
               <div className="flex space-x-3 justify-center">
                 <Button
                   variant={isPlaying ? "outline" : "default"}
                   size="icon"
-                  onClick={
-                    isPlaying ? pauseTextToSpeech : startTextToSpeech
-                  }
+                  onClick={() => isPlaying ? pauseTextToSpeech() : startTextToSpeech()}
                   title={isPlaying ? "Pause" : "Play"}
                 >
-                  {isPlaying ? (
-                    <Pause className="h-5 w-5" />
-                  ) : (
-                    <Play className="h-5 w-5" />
-                  )}
+                  {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
                 </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={stopTextToSpeech}
-                  title="Stop"
-                >
+                <Button variant="outline" size="icon" onClick={stopTextToSpeech} title="Stop">
                   <Square className="h-5 w-5" />
                 </Button>
               </div>
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <h3 className="text-sm font-medium">Reading Speed</h3>
-                  <span className="text-sm font-medium">
-                    {speechRate.toFixed(1)}x
-                  </span>
+                  <span className="text-sm font-medium">{speechRate.toFixed(1)}x</span>
                 </div>
                 <Slider
                   value={[speechRate]}
@@ -1525,7 +1454,8 @@ export default function ReaderClient({
               </div>
               <div className="text-xs text-muted-foreground mt-4">
                 <p>Keyboard shortcuts:</p>
-                <p>Space or &apos;P&apos; key: Play/Pause</p>
+                <p>Space or 'P' key: Play/Pause</p>
+                <p>Click a word to start reading from there</p>
               </div>
             </div>
             <SheetFooter>
@@ -1535,6 +1465,159 @@ export default function ReaderClient({
             </SheetFooter>
           </SheetContent>
         </Sheet>
+
+        {/* Side Navigation Zones */}
+        <>
+          <div
+            className={`hidden md:block fixed left-0 z-30 cursor-pointer group ${isFullScreen ? "opacity-90" : ""}`}
+            style={{ top: "40%", height: "20%", width: "48px", background: "linear-gradient(to right, rgba(0,0,0,0.08), transparent)", borderRadius: "0 16px 16px 0" }}
+            onClick={() => {
+              if (readingDirection === "vertical") handlePageJumpVertical(verticalPage - 1);
+              else setCurrentPage(currentPage - 1);
+            }}
+          >
+            <div className={`flex items-center h-full justify-center transition-opacity ${isFullScreen ? "opacity-100" : "opacity-60"} group-hover:opacity-100`}>
+              <ChevronLeft className={`text-muted-foreground ${isFullScreen ? "h-12 w-12" : "h-8 w-8"}`} />
+            </div>
+          </div>
+          <div
+            className={`hidden md:block fixed right-0 z-30 cursor-pointer group ${isFullScreen ? "opacity-90" : ""}`}
+            style={{ top: "40%", height: "20%", width: "48px", background: "linear-gradient(to left, rgba(0,0,0,0.08), transparent)", borderRadius: "16px 0 0 16px" }}
+            onClick={() => {
+              if (readingDirection === "vertical") handlePageJumpVertical(verticalPage + 1);
+              else setCurrentPage(currentPage + 1);
+            }}
+          >
+            <div className={`flex items-center h-full justify-center transition-opacity ${isFullScreen ? "opacity-100" : "opacity-60"} group-hover:opacity-100`}>
+              <ChevronRight className={`text-muted-foreground ${isFullScreen ? "h-12 w-12" : "h-8 w-8"}`} />
+            </div>
+          </div>
+        </>
+
+        {/* Fixed Jump to Page Button */}
+        <Button
+          variant="outline"
+          size="lg"
+          className="fixed bottom-6 left-6 z-50 shadow-md"
+          onClick={() => {
+            setJumpPageValue(readingDirection === "vertical" ? verticalPage : currentPage + 1);
+            setShowPageJump(true);
+          }}
+          title="Jump to Page"
+        >
+          <ChevronUp className="h-5 w-5 mr-1" /> Jump to Page
+        </Button>
+
+        {showPageJump && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white dark:bg-gray-900 rounded-lg shadow-lg p-6 w-full max-w-xs">
+              <h2 className="text-lg font-bold mb-2">Jump to Page</h2>
+              <div className="mb-2 text-center text-sm text-muted-foreground">
+                Page {jumpPageValue} of {contentPages.length}
+              </div>
+              <Slider
+                min={1}
+                max={contentPages.length}
+                step={1}
+                value={[jumpPageValue]}
+                onValueChange={([val]) => setJumpPageValue(val)}
+                className="mb-4"
+              />
+              <div className="flex justify-between gap-2">
+                <Button
+                  onClick={() => {
+                    if (jumpPageValue >= 1 && jumpPageValue <= contentPages.length) {
+                      if (readingDirection === "vertical") {
+                        handlePageJumpVertical(jumpPageValue);
+                      } else {
+                        setCurrentPage(jumpPageValue - 1);
+                        setShowPageJump(false);
+                      }
+                    }
+                  }}
+                >
+                  Go
+                </Button>
+                <Button variant="outline" onClick={() => setShowPageJump(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+interface HorizontalSwipePageProps {
+  currentPage: number;
+  setCurrentPage: React.Dispatch<React.SetStateAction<number>>;
+  contentPages: string[];
+  contentRef: React.RefObject<HTMLDivElement>;
+  getFontFamilyClass: () => string;
+  fontSize: number;
+  lineHeight: number;
+  getWordDefinition: (word: string, e: React.MouseEvent<HTMLSpanElement>) => void;
+  currentWordIndex: number;
+  handleWordClick: (index: number) => void;
+}
+
+function HorizontalSwipePage(props: HorizontalSwipePageProps) {
+  const {
+    currentPage,
+    setCurrentPage,
+    contentPages,
+    contentRef,
+    getFontFamilyClass,
+    fontSize,
+    lineHeight,
+    getWordDefinition,
+    currentWordIndex,
+    handleWordClick,
+  } = props;
+  const touchStartX = useRef(0);
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    touchStartX.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
+    if (deltaX > 50 && currentPage > 0) {
+      setCurrentPage(currentPage - 1);
+    } else if (deltaX < -50 && currentPage < contentPages.length - 1) {
+      setCurrentPage(currentPage + 1);
+    }
+  };
+
+  return (
+    <motion.div
+      className="bg-white dark:bg-gray-900 rounded-lg shadow-md"
+      style={{ touchAction: "pan-y" }}
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+    >
+      <div
+        ref={contentRef}
+        className={`py-6 sm:py-8 ${getFontFamilyClass()} prose dark:prose-invert prose-neutral`}
+        style={{ fontSize: `clamp(14px, 4vw, ${fontSize}px)`, lineHeight }}
+      >
+        {contentPages[currentPage]?.split("\n\n").map((paragraph, pIndex) => (
+          <p key={pIndex} className="mb-4">
+            {paragraph.split(/\s+/).map((word, wIndex) => (
+              <span
+                key={wIndex}
+                className={`word cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 ${
+                  currentWordIndex === wIndex ? "bg-yellow-200" : ""
+                }`}
+                onClick={() => handleWordClick(wIndex)}
+              >
+                {word}{" "}
+              </span>
+            ))}
+          </p>
+        ))}
       </div>
     </motion.div>
   );

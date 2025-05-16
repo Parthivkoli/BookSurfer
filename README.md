@@ -1,142 +1,154 @@
-# BookSurfer📚 🌊  - Your AI-Enhanced Reading Adventure 🤖 
+# BookSurfer📚 🌊
+> *Your AI-Enhanced Reading Adventure — Ride the Waves of Knowledge!*
 
-Welcome to **BookSurfer🌊**, a cutting-edge web platform created by **Parthiv Koli** to revolutionize your reading experience!  
+![Stars](https://img.shields.io/github/stars/Parthivkoli/BookSurfer?style=flat-square&color=yellow&logo=github&label=Stars)
+![Forks](https://img.shields.io/github/forks/Parthivkoli/BookSurfer?style=flat-square&color=blue&logo=github&label=Forks)
+![Issues](https://img.shields.io/github/issues/Parthivkoli/BookSurfer?style=flat-square&color=orange&logo=github)
+![Pull Requests](https://img.shields.io/github/issues-pr/Parthivkoli/BookSurfer?style=flat-square&color=green&logo=github)
+![License](https://img.shields.io/github/license/Parthivkoli/BookSurfer?style=flat-square&color=lightgrey&logo=open-source-initiative&label=MIT%20License)
 
-BookSurfer blends the timeless joy of reading with powerful AI features, providing access to thousands of free books from diverse open-source libraries, along with AI-generated summaries, insightful Q&A, immersive audio narration, and enhanced readability options. Whether you're a bookworm, a researcher, or a casual reader, **BookSurfer** is your gateway to a smarter, more engaging reading journey.  
+![Next.js](https://img.shields.io/badge/Next.js-Framework-black?style=flat-square&logo=next.js)
+![TailwindCSS](https://img.shields.io/badge/TailwindCSS-Styling-blue?style=flat-square&logo=tailwindcss)
+![shadcn/ui](https://img.shields.io/badge/shadcn/UI%20Components-purple?style=flat-square)
+![Framer Motion](https://img.shields.io/badge/Framer%20Motion-Animations-black?style=flat-square&logo=framer)
+![AI Magic](https://img.shields.io/badge/🤖%20AI%20Magic-Enabled-success?style=flat-square)
+![Books Available](https://img.shields.io/badge/📚%20Books-10000%2B%20Free-lightgreen?style=flat-square)
+
+---
+
+Welcome to **BookSurfer**, a passion project lovingly crafted by [**Parthiv Koli**](https://github.com/Parthivkoli) to transform the way you read, explore, and engage with books.
+
+Whether you're a die-hard bibliophile, a student researcher, or someone just falling in love with books — **BookSurfer** helps you ride the waves of reading with intelligence, freedom, and fun. 🌊
 
 ---
 
-## ✨ Key Features  
-
-### 📚 Vast Book Collection  
-Dive into a treasure trove of free books from multiple open-source libraries:  
-- **Open Library**: Access millions of book metadata and full texts.  
-- **Project Gutenberg**: Explore thousands of public domain classics.  
-- **Google Books (Free)**: Discover additional free books and previews.  
-- Books span genres like fiction, non-fiction, science, history, and more, available in various languages.  
-
-### 🔍 Smart Search & Discovery  
-- **Full-Text Search**: Find books by title, author, or keyword effortlessly.  
-- **Advanced Filters**: Narrow results by genre, author, language, and source.  
-- **Sorting Options**: Organize by relevance, title, publication date, or rating.  
-- **Category Browsing**: Explore curated categories for a personalized experience.  
-
-### 📖 Immersive Reader Experience  
-- **Distraction-Free Interface**: Clean, focused reading environment.  
-- **Customizable Settings**: Adjust font size, themes (light, dark, sepia), and more.  
-- **Progress Tracking & Bookmarking**: Save and track your reading seamlessly.  
-- **Text-to-Speech (TTS)**: High-quality AI narration with word highlighting.  
-
-### 🤖 AI-Powered Magic  
-- **AI Summaries**: Get concise, intelligent summaries of chapters or entire books.  
-- **Context-Aware Q&A**: Ask questions and receive AI-driven answers.  
-- **Reading Recommendations**: Discover new books based on your interests.  
-
-### 👤 Personalized User Features  
-- **Personal Library**: Manage your books, notes, and highlights.  
-- **Reading History & Stats**: Track your reading habits.  
-- **Cross-Device Sync**: Access your library across all devices.  
+## ✨ Why BookSurfer?  
+Because reading is more than flipping pages — it's **surfing ideas**. BookSurfer blends **AI intelligence**, **open-source values**, and **reader-first design** to bring you a magical digital library.
 
 ---
-# Screenshots
-![BookSurfer Homepage](https://github.com/Parthivkoli/BookSurfer/blob/e16c67fb7e7b632b5a026ed521d3b9a97bcb7262/public/screenshots/homepage.gif) 
 
-## 🚀 Getting Started  
+## 🌟 Key Features  
+
+### 📚 Open Book Collection  
+- **Open Library**: Millions of metadata-rich books  
+- **Project Gutenberg**: Timeless public domain gems  
+- **Google Books** (Free): Discover new books and sneak peeks  
+- **Research & Light Novels**: Includes **arXiv, CORE, Semantic Scholar, LNMTL, Royal Road, Webnovel**
+
+> Genres range from **fantasy, science, non-fiction, philosophy, tech**, and more—available in multiple languages 🌐
+
+---
+
+### 🔍 Smart Discovery  
+- 🔎 **Full-Text Search** (by title, author, keyword)  
+- 🎯 **Filters** (genre, language, rating, platform)  
+- 🧠 **Curated Categories** & AI-powered recommendations  
+
+---
+
+### 📖 Reader-Friendly Design  
+- 🧘‍♀️ **Distraction-Free Mode**  
+- 🎨 **Customizable themes** (dark, sepia, light)  
+- 🔖 **Progress Tracking**, **Bookmarks**, and Notes  
+- 🗣️ **Text-to-Speech (TTS)** with word-highlighting narration  
+
+---
+
+### 🤖 AI Features That Feel Like Magic  
+- ✂️ **Instant Book/Chapter Summaries**  
+- ❓ **Ask Me Anything** — Context-aware book Q&A  
+- 📚 **Personalized Recommendations** via your reading habits  
+
+---
+
+### 👤 Personal Library  
+- 📓 Save your books, highlights, notes  
+- 📈 View your reading stats  
+- 🔄 Cross-device sync with your account  
+
+---
+
+## 🖼️ Screenshots  
+![BookSurfer Homepage](https://github.com/Parthivkoli/BookSurfer/blob/e16c67fb7e7b632b5a026ed521d3b9a97bcb7262/public/screenshots/homepage.gif)
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites  
-- **Node.js**: Version 18.x or higher  
-- **Package Manager**: npm or Yarn  
+- **Node.js**: v18+  
+- **Package Manager**: `npm` or `yarn`
 
-### Installation  
-
-Clone the repository:  
+### Install & Run  
 ```bash
 git clone https://github.com/Parthivkoli/BookSurfer.git
 cd BookSurfer
-```
+npm install        # or yarn install
+npm run dev        # or yarn dev
+````
 
-Install dependencies:  
-```bash
-npm install  # or yarn install
-```
-
-Run the development server:  
-```bash
-npm run dev  # or yarn dev
-```
-
-Open [http://localhost:3000](http://localhost:3000) in your browser to explore **BookSurfer**!  
+Open in your browser: [http://localhost:3000](http://localhost:3000)
 
 ---
 
-## 🛠️ Project Structure  
+## 🗂️ Project Structure
+
 ```
 BookSurfer/
-├── app/                  # Next.js app directory
-│   ├── discover/         # Book discovery and search page
-│   ├── library/          # User’s personal library page
-│   ├── reader/           # Interactive book reader page
-│   ├── globals.css       # Global styles with Tailwind CSS
-│   ├── layout.tsx        # Root layout component
-│   └── page.tsx          # Homepage
-├── components/           # Reusable UI components
-│   ├── ui/               # shadcn/ui components (e.g., buttons, menus)
-│   ├── main-nav.tsx      # Main navigation bar
-│   └── theme-*.tsx       # Theme-related components (toggle, provider)
-├── lib/                  # Utility functions and API clients
-│   ├── api/              # API integrations (Open Library, Gutenberg, etc.)
-│   └── utils.ts          # Helper functions (e.g., AI summarization)
-├── types/                # TypeScript type definitions for books and data
-├── public/               # Static assets (logos, screenshots)
-│   └── screenshots/      # Screenshots for README
-└── ...                   # Configuration files (e.g., package.json, .gitignore)
+├── app/                  # Next.js pages & routes
+│   ├── discover/         # Book discovery/search
+│   ├── library/          # Personal reading library
+│   ├── reader/           # Immersive book reader
+│   ├── globals.css       # Global Tailwind styles
+│   └── layout.tsx        # App layout
+├── components/           # UI Components
+│   ├── ui/               # shadcn/ui based elements
+│   ├── main-nav.tsx      # Top navigation
+│   └── theme-*.tsx       # Theme toggles and providers
+├── lib/                  # API clients and AI utilities
+│   └── api/              # APIs (OpenLibrary, GoogleBooks, etc.)
+├── public/               # Static assets
+│   └── screenshots/      # GIFs & demo images
+└── types/                # TypeScript interfaces
 ```
 
 ---
 
-## 🌐 API Integration  
-**BookSurfer** leverages powerful open-source APIs to provide a vast book collection:  
-- **Open Library API** - Metadata and full texts for millions of books.  
-- **Project Gutenberg API** - Free access to public domain classics.  
-- **Google Books API** - Additional free book previews and information.  
-- **Research & Light Novel APIs** - Includes arXiv, CORE, Semantic Scholar, LNMTL, Royal Road, and Webnovel.  
+## 🌐 APIs Used
+
+* 📘 [Open Library API](https://openlibrary.org/developers/api)
+* 📖 [Project Gutenberg](https://gutendex.com/)
+* 🔍 [Google Books API](https://developers.google.com/books)
+* 📊 \[Semantic Scholar, CORE, arXiv, Webnovel, RoyalRoad, LNMTL]
 
 ---
 
-## 🤝 Contributing  
-We’d love your help in making **BookSurfer** even better! Here’s how you can contribute:  
+## 🤝 Contributing
 
-1. **Fork the Repository**: Click the “Fork” button on GitHub.  
-2. **Create a Feature Branch**:  
-   ```bash
-   git checkout -b feature/amazing-feature
-   ```
-3. **Make Your Changes**: Update code, add features, or fix bugs.  
-4. **Commit Your Changes**:  
-   ```bash
-   git commit -m "Add some amazing feature"
-   ```
-5. **Push to Your Branch**:  
-   ```bash
-   git push origin feature/amazing-feature
-   ```
-6. **Open a Pull Request**: Submit your changes for review on GitHub.  
+We love contributions!
+BookSurfer is for the community, by the community.
 
-Feel free to reach out via **GitHub Issues** or email (**parthivkoli69@gmail.com**) with questions or ideas!  
+### Steps to Contribute
+
+1. **Fork the repo**
+2. Create a new branch: `git checkout -b feature/amazing-feature`
+3. Make changes and commit: `git commit -m "Add amazing feature"`
+4. Push changes: `git push origin feature/amazing-feature`
+5. Create a Pull Request 🙌
+
+Have ideas or bugs? [Raise an Issue](https://github.com/Parthivkoli/BookSurfer/issues)
 
 ---
 
-## 📜 License  
-**BookSurfer** is licensed under the **MIT License** – see the `LICENSE` file for details. This open-source project is my passion, and I’m excited to share it with the community!  
+## 🙏 Special Thanks
+
+* 📚 **Open Library**, **Gutenberg**, **Google Books**
+* 💻 The amazing **open-source** community:
+  `Next.js`, `Tailwind CSS`, `shadcn/ui`, `framer-motion`
+* 🤝 **My friends, mentors, and family** who inspired BookSurfer
+* 💙 And **you**, the reader. Happy reading and happy surfing! 🌊📖
 
 ---
 
-## 🙏 Acknowledgments  
-A big thank you to the following for making **BookSurfer** possible:  
-- **Open Library** for their incredible book database.  
-- **Project Gutenberg** for free access to literary classics.  
-- **Google Books** for additional book insights.  
-- The open-source community, including contributors to **Next.js, Tailwind CSS, shadcn/ui, and framer-motion**.  
-- Special thanks to my **friends and family** for their support and inspiration—I couldn’t have built this without you!  
-
-Happy Reading! and Happy Surfing 🌊📖🚀  
+> **Made with code, caffeine, and curiosity.**
+> — *Parthiv Koli* | [GitHub](https://github.com/Parthivkoli) | [LinkedIn](https://linkedin.com/in/parthivkoli) | ✉️ [parthivkoli69@gmail.com](mailto:parthivkoli69@gmail.com)

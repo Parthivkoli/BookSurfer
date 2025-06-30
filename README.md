@@ -6,6 +6,7 @@
 ![Issues](https://img.shields.io/github/issues/Parthivkoli/BookSurfer?style=flat-square&color=orange&logo=github)
 ![Pull Requests](https://img.shields.io/github/issues-pr/Parthivkoli/BookSurfer?style=flat-square&color=green&logo=github)
 ![License](https://img.shields.io/github/license/Parthivkoli/BookSurfer?style=flat-square&color=lightgrey&logo=open-source-initiative&label=MIT%20License)
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/Parthivkoli/BookSurfer?utm_source=oss&utm_medium=github&utm_campaign=Parthivkoli%2FBookSurfer&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
 ![Next.js](https://img.shields.io/badge/Next.js-Framework-black?style=flat-square&logo=next.js)
 ![TailwindCSS](https://img.shields.io/badge/TailwindCSS-Styling-blue?style=flat-square&logo=tailwindcss)

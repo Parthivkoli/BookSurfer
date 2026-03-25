@@ -6,7 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Github } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-export default function SignInPage() {
+import { Suspense } from "react";
+
+function SignInContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -85,5 +87,17 @@ export default function SignInPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SignInPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-background to-muted">
+        <div className="animate-spin rounded-full h-12 w-12 border-4 border-primary border-t-transparent"></div>
+      </div>
+    }>
+      <SignInContent />
+    </Suspense>
   );
 } 

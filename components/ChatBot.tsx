@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 
 interface Book {
@@ -25,7 +26,7 @@ const BookList = ({ books }: { books: Book[] }) => (
     {books.map((book) => (
       <div key={book.id} className="flex items-start gap-2">
         {book.coverImage && (
-          <img src={book.coverImage} alt={book.title} className="w-12 h-16 object-cover rounded" />
+          <Image src={book.coverImage} alt={book.title} width={48} height={64} className="object-cover rounded" />
         )}
         <div>
           <a href={`/reader/${book.id}`} className="text-blue-500 underline">{book.title}</a>
@@ -42,28 +43,60 @@ const ChatBot = () => {
   const chatLogRef = useRef<HTMLDivElement>(null);
   const userInputRef = useRef<HTMLInputElement>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const apiCallTimestamps = useRef<number[]>([]);
+  const MAX_REQUESTS_PER_MINUTE = 10;
+
+  // Rate limiting helper
+  const canMakeRequest = (): boolean => {
+    const now = Date.now();
+    const oneMinuteAgo = now - 60000;
+    apiCallTimestamps.current = apiCallTimestamps.current.filter(t => t > oneMinuteAgo);
+    
+    if (apiCallTimestamps.current.length >= MAX_REQUESTS_PER_MINUTE) {
+      return false;
+    }
+    apiCallTimestamps.current.push(now);
+    return true;
+  };
+
+  // Fetch with timeout
+  const fetchWithTimeout = async (url: string, timeout = 5000): Promise<Response> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      return await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
 
   async function searchBooks(query: string): Promise<Book[]> {
+    if (!canMakeRequest()) {
+      console.warn("Rate limit exceeded for book search");
+      return [];
+    }
     try {
       const [openLibraryBooks, gutenbergBooks] = await Promise.all([
-        fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=5`)
+        fetchWithTimeout(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=5`, 5000)
           .then(res => res.json())
           .then(data => data.docs.map((doc: any) => ({
             id: doc.key,
             title: doc.title,
             authors: doc.author_name || [],
             coverImage: doc.cover_i ? `https://covers.openlibrary.org/b/id/${doc.cover_i}-M.jpg` : undefined,
-          }))),
-        fetch(`https://gutendex.com/books?search=${encodeURIComponent(query)}&limit=5`)
+          })))
+          .catch(() => []),
+        fetchWithTimeout(`https://gutendex.com/books?search=${encodeURIComponent(query)}&limit=5`, 5000)
           .then(res => res.json())
           .then(data => data.results.map((book: any) => ({
             id: book.id.toString(),
             title: book.title,
             authors: book.authors.map((a: any) => a.name),
             coverImage: book.formats["image/jpeg"] || undefined,
-          }))),
+          })))
+          .catch(() => []),
       ]);
-      return [...openLibraryBooks, ...gutenbergBooks].slice(0, 5); // Limit to 5 results
+      return [...openLibraryBooks, ...gutenbergBooks].slice(0, 5);
     } catch (error) {
       console.error("Error fetching books:", error);
       return [];
@@ -71,13 +104,19 @@ const ChatBot = () => {
   }
 
   async function getWebInfo(query: string): Promise<string> {
+    if (!canMakeRequest()) {
+      return "I'm getting too many requests. Please wait a moment before asking again.";
+    }
     try {
-      const response = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`);
+      const response = await fetchWithTimeout(
+        `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1`,
+        5000
+      );
       const data = await response.json();
       return data.Abstract || data.RelatedTopics?.[0]?.Text || "I couldn't find specific information about that.";
     } catch (error) {
       console.error("Error fetching web info:", error);
-      return "Sorry, I couldn't fetch that information right now.";
+      return "Sorry, I couldn't fetch that information right now. Please try again later.";
     }
   }
 

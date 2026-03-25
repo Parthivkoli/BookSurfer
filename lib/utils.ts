@@ -369,3 +369,18 @@ export function generateAnswer(content: string, question: string, maxSentences: 
 
   return answer;
 }
+/**
+ * Splits text into pages based on word count.
+ * @param content - The text to paginate.
+ * @param wordsPerPage - Number of words per page (default: 400).
+ * @returns Array of strings (pages).
+ */
+export function paginateByWords(content: string, wordsPerPage = 400): string[] {
+  if (!content) return ["No content available."];
+  const words = content.split(/\s+/);
+  const pages: string[] = [];
+  for (let i = 0; i < words.length; i += wordsPerPage) {
+    pages.push(words.slice(i, i + wordsPerPage).join(" "));
+  }
+  return (pages.length > 0) ? pages : ["No content available."];
+}

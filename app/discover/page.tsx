@@ -1,19 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { MainNav } from "@/components/main-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { BookOpen, Search, Filter, Loader2 } from "lucide-react";
-import Link from "next/link";
-import { searchBooks } from "@/lib/api/books"; // Books API
-import { searchArxiv } from "@/lib/api/arxiv"; // Research Papers (arXiv)
-import { searchSemanticScholar } from "@/lib/api/semanticscholar"; // Research Papers (Semantic Scholar)
-import { searchLNMTL } from "@/lib/api/lnmtl"; // Light Novels (LNMTL)
-import { searchRoyalRoad } from "@/lib/api/royalroad"; // Light Novels (Royal Road)
-import { scrapeWebnovel } from "@/lib/api/webnovel"; // Light Novels (Webnovel)
-import { Book, BookSearchParams } from "@/types/book";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Search, Filter, SlidersHorizontal, AlertCircle, X } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { BookCard } from "@/components/book-card";
+import { BookCardSkeleton } from "@/components/ui/skeletons";
+import { NoResultsState } from "@/components/ui/empty-states";
+import { searchArxiv } from "@/lib/api/arxiv";
+import { searchSemanticScholar } from "@/lib/api/semanticscholar";
+import { searchLNMTL } from "@/lib/api/lnmtl";
+import { searchRoyalRoad } from "@/lib/api/royalroad";
+import { scrapeWebnovel } from "@/lib/api/webnovel";
+import { Book } from "@/types/book";
 import {
   Select,
   SelectContent,
@@ -32,453 +34,663 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
+import { Badge } from "@/components/ui/badge";
 
-// Define all possible source types
-type SourceType =
-  | "openlibrary"
-  | "gutenberg"
-  | "google"
-  | "internetarchive"
-  | "librivox"
-  | "feedbooks"
-  | "arxiv"
-  | "semanticscholar"
-  | "lnmtl"
-  | "royalroad"
-  | "webnovel";
+// ===========================================================================
+// Types
+// ===========================================================================
 
-// Extend Book type to include optional abstract for papers
+type ContentType = "books" | "papers" | "novels";
+
+type BookSource  = "openlibrary" | "gutenberg" | "google" | "internetarchive" | "librivox" | "feedbooks";
+type PaperSource = "arxiv" | "semanticscholar";
+type NovelSource = "lnmtl" | "royalroad" | "webnovel";
+type AnySource   = BookSource | PaperSource | NovelSource;
+
 interface ExtendedBook extends Book {
   abstract?: string;
 }
 
+// ===========================================================================
+// Static config
+// ===========================================================================
+
+const BOOKS_PER_PAGE = 12;
+const DEBOUNCE_MS    = 400;
+const DEFAULT_BOOK_SOURCES: AnySource[] = ["openlibrary", "gutenberg", "google"];
+
+const SOURCE_LABELS: Record<AnySource, string> = {
+  openlibrary:     "Open Library",
+  gutenberg:       "Project Gutenberg",
+  google:          "Google Books",
+  internetarchive: "Internet Archive",
+  librivox:        "LibriVox",
+  feedbooks:       "Feedbooks",
+  arxiv:           "arXiv",
+  semanticscholar: "Semantic Scholar",
+  lnmtl:           "LNMTL",
+  royalroad:       "Royal Road",
+  webnovel:        "Webnovel",
+};
+
+const SOURCES_BY_TYPE: Record<ContentType, AnySource[]> = {
+  books:  ["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"],
+  papers: ["arxiv", "semanticscholar"],
+  novels: ["lnmtl", "royalroad", "webnovel"],
+};
+
+const BOOK_TABS = [
+  { value: "all",        label: "All"         },
+  { value: "fiction",    label: "Fiction"     },
+  { value: "nonfiction", label: "Non-Fiction" },
+  { value: "science",    label: "Science"     },
+  { value: "history",    label: "History"     },
+];
+
+const LANGUAGE_OPTIONS = [
+  { code: "en", label: "English" },
+  { code: "fr", label: "French"  },
+  { code: "es", label: "Spanish" },
+  { code: "de", label: "German"  },
+];
+
+const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
+  books:  "Books",
+  papers: "Research Papers",
+  novels: "Light Novels",
+};
+
+// ===========================================================================
+// Pure helpers
+// ===========================================================================
+
+function normalizeNovel(novel: any): ExtendedBook {
+  return {
+    ...novel,
+    id:          novel.id ?? `novel-${novel.title}-${Math.random()}`,
+    authors:     novel.authors ?? ["Unknown Author"],
+    description: novel.genre   ? `Genre: ${novel.genre}` : undefined,
+    categories:  novel.genre   ? [novel.genre] : undefined,
+    pageCount:   novel.chapters,
+    downloadUrl: novel.url,
+    abstract:    undefined,
+  } as ExtendedBook;
+}
+
+function applySort(items: ExtendedBook[], sortBy: string): ExtendedBook[] {
+  if (sortBy === "relevance") return items;
+  return [...items].sort((a, b) => {
+    if (sortBy === "title")  return a.title.localeCompare(b.title);
+    if (sortBy === "date")   return (b.publishedDate ?? "").localeCompare(a.publishedDate ?? "");
+    if (sortBy === "rating") return (b.rating ?? 0) - (a.rating ?? 0);
+    return 0;
+  });
+}
+
+function itemKey(item: ExtendedBook, index: number): string {
+  return item.id ? String(item.id) : `item-${index}-${item.title}`;
+}
+
+function pageWindow(current: number, total: number, count = 5): number[] {
+  if (total <= count) return Array.from({ length: total }, (_, i) => i + 1);
+  let start = Math.max(1, current - Math.floor(count / 2));
+  const end  = Math.min(total, start + count - 1);
+  start = Math.max(1, end - count + 1);
+  return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+}
+
+// ===========================================================================
+// Component
+// ===========================================================================
+
 export default function DiscoverPage() {
-  const [searchQuery, setSearchQuery] = useState("");
-  const [results, setResults] = useState<ExtendedBook[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
-  const [activeTab, setActiveTab] = useState("all");
-  const [contentType, setContentType] = useState<"books" | "papers" | "novels">("books");
-  const [sources, setSources] = useState<SourceType[]>([
-    "openlibrary",
-    "gutenberg",
-    "google",
-    "internetarchive",
-    "librivox",
-    "feedbooks",
-    "arxiv",
-    "semanticscholar",
-    "lnmtl",
-    "royalroad",
-    "webnovel",
-  ]);
-  const [languages, setLanguages] = useState<string[]>([]);
-  const [sortBy, setSortBy] = useState("relevance");
+  // Two-tier search: inputValue (instant, controlled) vs searchQuery (debounced, triggers fetch)
+  const [inputValue,    setInputValue]    = useState("");
+  const [searchQuery,   setSearchQuery]   = useState("");
 
-  const booksPerPage = 20;
+  const [contentType,   setContentType]   = useState<ContentType>("books");
+  const [activeTab,     setActiveTab]     = useState("all");
+  const [activeSources, setActiveSources] = useState<AnySource[]>(DEFAULT_BOOK_SOURCES);
+  const [languages,     setLanguages]     = useState<string[]>([]);
+  const [sortBy,        setSortBy]        = useState("relevance");
 
-  // Fetch results based on content type and search parameters
+  const [results,       setResults]       = useState<ExtendedBook[]>([]);
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState<string | null>(null);
+  const [currentPage,   setCurrentPage]   = useState(1);
+  const [totalPages,    setTotalPages]    = useState(1);
+
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+  const abortRef      = useRef<AbortController | null>(null);
+
+  // -------------------------------------------------------------------------
+  // Handlers
+  // -------------------------------------------------------------------------
+
+  const handleContentTypeChange = useCallback((next: ContentType) => {
+    setContentType(next);
+    setActiveSources(next === "books" ? DEFAULT_BOOK_SOURCES : SOURCES_BY_TYPE[next]);
+    setActiveTab("all");
+    setCurrentPage(1);
+    setError(null);
+  }, []);
+
+  const handleInputChange = useCallback((value: string) => {
+    setInputValue(value);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      setSearchQuery(value.trim());
+      setCurrentPage(1);
+    }, DEBOUNCE_MS);
+  }, []);
+
+  const handleSourceToggle = useCallback((source: AnySource, checked: boolean) => {
+    setActiveSources(prev =>
+      checked ? [...prev, source] : prev.filter(s => s !== source)
+    );
+    setCurrentPage(1);
+  }, []);
+
+  const handleLanguageToggle = useCallback((lang: string, checked: boolean) => {
+    setLanguages(prev => checked ? [...prev, lang] : prev.filter(l => l !== lang));
+    setCurrentPage(1);
+  }, []);
+
+  const resetFilters = useCallback(() => {
+    setActiveSources(contentType === "books" ? DEFAULT_BOOK_SOURCES : SOURCES_BY_TYPE[contentType]);
+    setLanguages([]);
+    setSortBy("relevance");
+    setCurrentPage(1);
+  }, [contentType]);
+
+  const clearSearch = useCallback(() => {
+    setInputValue("");
+    setSearchQuery("");
+    setCurrentPage(1);
+    resetFilters();
+  }, [resetFilters]);
+
+  // -------------------------------------------------------------------------
+  // Main fetch effect
+  // -------------------------------------------------------------------------
+
   useEffect(() => {
-    const fetchResults = async () => {
-      setLoading(true);
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const SEARCH_TIMEOUT_MS = 20000;
+
+    const timeoutId = setTimeout(() => {
+      // Ensure the UI never gets stuck if the backend call hangs.
+      controller.abort();
+      setError("Search timed out. Please try again.");
+      setResults([]);
+      setTotalPages(1);
+      setLoading(false);
+    }, SEARCH_TIMEOUT_MS);
+
+    // Only use sources valid for the current content type
+    const validSources = activeSources.filter(s =>
+      (SOURCES_BY_TYPE[contentType] as string[]).includes(s)
+    );
+
+    if (validSources.length === 0) {
+      setLoading(false);
+      setError("Please select at least one book source.");
+      setResults([]);
+      setTotalPages(1);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    async function run() {
       try {
-        let allResults: ExtendedBook[] = [];
-        let totalItems = 0;
+        let items: ExtendedBook[] = [];
+        let total = 0;
 
         if (contentType === "books") {
-          const bookSources = sources.filter((s) =>
-            ["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"].includes(s)
-          ) as BookSearchParams["sources"];
-          if (bookSources && bookSources.length > 0) {
-            const params: BookSearchParams = {
-              query: searchQuery,
-              page: currentPage,
-              limit: booksPerPage,
-              sources: bookSources,
-            };
-            if (activeTab !== "all") params.subject = activeTab;
-            if (languages.length > 0) params.languages = languages;
+          const params = new URLSearchParams({
+            query:   searchQuery,
+            page:    String(currentPage),
+            limit:   String(BOOKS_PER_PAGE),
+            sources: validSources.join(","),
+          });
+          if (activeTab !== "all") params.set("subject",   activeTab);
+          if (languages.length)    params.set("languages", languages.join(","));
 
-            const result = await searchBooks(params);
-            allResults = result.books;
-            totalItems = result.totalItems;
-          }
-        } else if (contentType === "papers") {
-          const paperSources = sources.filter((s) => ["arxiv", "semanticscholar"].includes(s));
-          const paperPromises = paperSources.map((source) => {
-            if (source === "arxiv") {
-              return searchArxiv(searchQuery);
-            } else {
-              return searchSemanticScholar(searchQuery);
+          const res = await fetch(`/api/books/search?${params}`, {
+            signal: controller.signal,
+          });
+          if (!res.ok) throw new Error(`Books API returned ${res.status}`);
+          const data = await res.json();
+          items = data.books      ?? [];
+          total = data.totalItems ?? items.length;
+
+          // Resilience: if multi-source returns nothing, fall back to OpenLibrary only.
+          if (items.length === 0) {
+            const fallbackParams = new URLSearchParams({
+              query: searchQuery,
+              page: String(currentPage),
+              limit: String(BOOKS_PER_PAGE),
+              sources: "openlibrary",
+            });
+            if (activeTab !== "all") fallbackParams.set("subject", activeTab);
+
+            const fallbackRes = await fetch(`/api/books/search?${fallbackParams}`, {
+              signal: controller.signal,
+            });
+            if (fallbackRes.ok) {
+              const fallbackData = await fallbackRes.json();
+              items = fallbackData.books ?? [];
+              total = fallbackData.totalItems ?? items.length;
             }
-          });
-          const paperResults = await Promise.all(paperPromises);
-          allResults = paperResults.flat();
-          totalItems = allResults.length;
-        } else if (contentType === "novels") {
-          const novelSources = sources.filter((s) => ["lnmtl", "royalroad", "webnovel"].includes(s));
-          const novelPromises = novelSources.map((source) => {
-            if (source === "lnmtl") return searchLNMTL(searchQuery);
-            if (source === "royalroad") return searchRoyalRoad(searchQuery);
-            return scrapeWebnovel(searchQuery);
-          });
-          const novelResults = await Promise.all(novelPromises);
-          allResults = novelResults.flat().map(novel => {
-            const lightNovel = novel as { genre?: string; url?: string; chapters?: number };
-            return {
-              ...novel,
-              authors: ["Unknown Author"],
-              description: lightNovel.genre ? `Genre: ${lightNovel.genre}` : undefined,
-              coverImage: undefined,
-              publishedDate: undefined,
-              categories: lightNovel.genre ? [lightNovel.genre] : undefined,
-              language: undefined,
-              pageCount: lightNovel.chapters,
-              downloadUrl: lightNovel.url,
-              rating: undefined,
-              abstract: undefined,
-              chapters: undefined,
-            } as ExtendedBook;
-          });
-          totalItems = allResults.length;
+          }
+
+        } else if (contentType === "papers") {
+          const settled = await Promise.allSettled(
+            (validSources as PaperSource[]).map(src =>
+              src === "arxiv"
+                ? searchArxiv(searchQuery)
+                : searchSemanticScholar(searchQuery)
+            )
+          );
+          items = settled
+            .filter((r): r is PromiseFulfilledResult<ExtendedBook[]> => r.status === "fulfilled")
+            .flatMap(r => r.value);
+          total = items.length;
+
+        } else {
+          const settled = await Promise.allSettled(
+            (validSources as NovelSource[]).map(src => {
+              if (src === "lnmtl")     return searchLNMTL(searchQuery);
+              if (src === "royalroad") return searchRoyalRoad(searchQuery);
+              return scrapeWebnovel(searchQuery);
+            })
+          );
+          items = settled
+            .filter((r): r is PromiseFulfilledResult<any[]> => r.status === "fulfilled")
+            .flatMap(r => r.value.map(normalizeNovel));
+          total = items.length;
         }
 
-        // Sorting
-        let sortedResults = [...allResults];
-        // Always put Gutenberg books at the top
-        sortedResults.sort((a, b) => {
-          if (a.source === 'gutenberg' && b.source !== 'gutenberg') return -1;
-          if (a.source !== 'gutenberg' && b.source === 'gutenberg') return 1;
-          // fallback to other sort
-          if (sortBy === "title") {
-            return a.title.localeCompare(b.title);
-          } else if (sortBy === "date") {
-            return (b.publishedDate ?? "").localeCompare(a.publishedDate ?? "");
-          } else if (sortBy === "rating") {
-            return (b.rating ?? 0) - (a.rating ?? 0);
-          }
-          return 0;
-        });
-        setResults(sortedResults);
-        setTotalPages(Math.ceil(totalItems / booksPerPage) || 1);
-      } catch (error) {
-        console.error(`Error fetching ${contentType}:`, error);
+        if (controller.signal.aborted) return;
+
+        setResults(applySort(items, sortBy));
+        setTotalPages(Math.max(1, Math.ceil(total / BOOKS_PER_PAGE)));
+      } catch (err: any) {
+        if (err?.name === "AbortError") return;
+        console.error("[discover] fetch error:", err);
+        setError("Something went wrong. Please try again.");
         setResults([]);
         setTotalPages(1);
       } finally {
-        setLoading(false);
+        clearTimeout(timeoutId);
+        if (!controller.signal.aborted) setLoading(false);
       }
+    }
+
+    run();
+
+    return () => {
+      clearTimeout(timeoutId);
+      controller.abort();
     };
+  }, [searchQuery, currentPage, activeTab, contentType, activeSources, languages, sortBy]);
 
-    fetchResults();
-  }, [searchQuery, currentPage, activeTab, sources, languages, sortBy, contentType]);
+  // -------------------------------------------------------------------------
+  // Derived values
+  // -------------------------------------------------------------------------
 
-  // Handle search form submission
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCurrentPage(1);
-  };
+  const disabledSources = (SOURCES_BY_TYPE[contentType] as AnySource[]).filter(
+    s => !activeSources.includes(s)
+  );
+  const activeFilterCount = disabledSources.length + languages.length;
+  const pages = pageWindow(currentPage, totalPages);
 
-  // Handle source filter changes
-  const handleSourceChange = (source: SourceType, checked: boolean) => {
-    setSources((prev) => (checked ? [...prev, source] : prev.filter((s) => s !== source)));
-    setCurrentPage(1);
-  };
-
-  // Handle language filter changes
-  const handleLanguageChange = (language: string, checked: boolean) => {
-    setLanguages((prev) => (checked ? [...prev, language] : prev.filter((l) => l !== language)));
-    setCurrentPage(1);
-  };
-
-  // Paginate results (client-side)
-  const paginatedResults = results.slice((currentPage - 1) * booksPerPage, currentPage * booksPerPage);
+  // -------------------------------------------------------------------------
+  // Render
+  // -------------------------------------------------------------------------
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col bg-background">
       <MainNav />
-      <div className="flex-1 max-w-7xl mx-auto py-8 px-4 md:px-6">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold">Discover</h1>
-          <Select value={contentType} onValueChange={(value) => setContentType(value as "books" | "papers" | "novels")}>
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Content Type" />
+
+      <main className="flex-1 max-w-7xl mx-auto w-full py-8 px-4 md:px-6 space-y-6">
+
+        {/* Page header */}
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">Discover</h1>
+            <p className="text-muted-foreground text-sm mt-1">
+              Search open libraries, research archives, and novel platforms
+            </p>
+          </div>
+
+          <Select
+            value={contentType}
+            onValueChange={v => handleContentTypeChange(v as ContentType)}
+          >
+            <SelectTrigger className="w-48 shrink-0">
+              <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="books">Books</SelectItem>
-              <SelectItem value="papers">Research Papers</SelectItem>
-              <SelectItem value="novels">Light Novels</SelectItem>
+              {(Object.keys(CONTENT_TYPE_LABELS) as ContentType[]).map(ct => (
+                <SelectItem key={ct} value={ct}>
+                  {CONTENT_TYPE_LABELS[ct]}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
 
-        {/* Filters and Tabs */}
-        <div className="flex items-center gap-2 mb-6">
-          <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-[180px]">
+        {/* Search bar */}
+        <form
+          onSubmit={e => {
+            e.preventDefault();
+            setSearchQuery(inputValue.trim());
+            setCurrentPage(1);
+          }}
+          className="relative"
+        >
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground h-4 w-4 pointer-events-none" />
+          <Input
+            value={inputValue}
+            onChange={e => handleInputChange(e.target.value)}
+            placeholder={`Search ${contentType} by title, author, or keyword...`}
+            className="pl-10 pr-20 h-12 text-base"
+            aria-label="Search"
+          />
+          {inputValue && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="absolute right-2 top-1/2 -translate-y-1/2 h-7 px-2 text-muted-foreground hover:text-foreground"
+              onClick={clearSearch}
+              aria-label="Clear search"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+          )}
+        </form>
+
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-3">
+          <Select value={sortBy} onValueChange={v => { setSortBy(v); setCurrentPage(1); }}>
+            <SelectTrigger className="w-44">
+              <SlidersHorizontal className="h-3.5 w-3.5 mr-2 text-muted-foreground shrink-0" />
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="relevance">Relevance</SelectItem>
-              <SelectItem value="title">Title</SelectItem>
-              <SelectItem value="date">Publication Date</SelectItem>
-              <SelectItem value="rating">Rating</SelectItem>
+              <SelectItem value="title">Title (A-Z)</SelectItem>
+              <SelectItem value="date">Newest First</SelectItem>
+              <SelectItem value="rating">Highest Rated</SelectItem>
             </SelectContent>
           </Select>
+
           <Sheet>
             <SheetTrigger asChild>
-              <Button variant="outline" size="icon">
+              <Button variant="outline" className="gap-2">
                 <Filter className="h-4 w-4" />
+                Filters
+                {activeFilterCount > 0 && (
+                  <Badge variant="secondary" className="h-5 min-w-5 px-1 text-xs">
+                    {activeFilterCount}
+                  </Badge>
+                )}
               </Button>
             </SheetTrigger>
-            <SheetContent>
+
+            <SheetContent className="flex flex-col">
               <SheetHeader>
-                <SheetTitle>Filter {contentType.charAt(0).toUpperCase() + contentType.slice(1)}</SheetTitle>
-                <SheetDescription>Refine your search with these filters</SheetDescription>
+                <SheetTitle>Filters</SheetTitle>
+                <SheetDescription>
+                  Refine results for {contentType}
+                </SheetDescription>
               </SheetHeader>
-              <div className="py-4">
-                <h3 className="font-medium mb-2">Sources</h3>
-                <div className="space-y-2">
-                  {contentType === "books" &&
-                    (["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"] as const).map(
-                      (source) => (
-                        <div key={source} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`source-${source}`}
-                            checked={sources.includes(source)}
-                            onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
-                          />
-                          <Label htmlFor={`source-${source}`}>
-                            {source === "openlibrary"
-                              ? "Open Library"
-                              : source === "gutenberg"
-                              ? "Project Gutenberg"
-                              : source === "google"
-                              ? "Google Books"
-                              : source === "internetarchive"
-                              ? "Internet Archive"
-                              : source === "librivox"
-                              ? "LibriVox"
-                              : "Feedbooks"}
-                          </Label>
-                        </div>
-                      )
-                    )}
-                  {contentType === "papers" &&
-                    (["arxiv", "semanticscholar"] as const).map((source) => (
-                      <div key={source} className="flex items-center space-x-2">
+
+              <div className="flex-1 overflow-y-auto py-6 space-y-6">
+                <section>
+                  <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                    Sources
+                  </h3>
+                  <div className="space-y-3">
+                    {(SOURCES_BY_TYPE[contentType] as AnySource[]).map(source => (
+                      <div key={source} className="flex items-center gap-2">
                         <Checkbox
-                          id={`source-${source}`}
-                          checked={sources.includes(source)}
-                          onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
+                          id={`src-${source}`}
+                          checked={activeSources.includes(source)}
+                          onCheckedChange={checked =>
+                            handleSourceToggle(source, checked as boolean)
+                          }
                         />
-                        <Label htmlFor={`source-${source}`}>
-                          {source === "arxiv" ? "arXiv" : "Semantic Scholar"}
+                        <Label htmlFor={`src-${source}`} className="cursor-pointer font-normal">
+                          {SOURCE_LABELS[source]}
                         </Label>
                       </div>
                     ))}
-                  {contentType === "novels" &&
-                    (["lnmtl", "royalroad", "webnovel"] as const).map((source) => (
-                      <div key={source} className="flex items-center space-x-2">
-                        <Checkbox
-                          id={`source-${source}`}
-                          checked={sources.includes(source)}
-                          onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
-                        />
-                        <Label htmlFor={`source-${source}`}>
-                          {source === "lnmtl" ? "LNMTL" : source === "royalroad" ? "Royal Road" : "Webnovel"}
-                        </Label>
-                      </div>
-                    ))}
-                </div>
+                  </div>
+                </section>
+
                 {contentType === "books" && (
                   <>
-                    <Separator className="my-4" />
-                    <h3 className="font-medium mb-2">Languages</h3>
-                    <div className="space-y-2">
-                      {["en", "fr", "es", "de"].map((lang) => (
-                        <div key={lang} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`lang-${lang}`}
-                            checked={languages.includes(lang)}
-                            onCheckedChange={(checked) => handleLanguageChange(lang, checked as boolean)}
-                          />
-                          <Label htmlFor={`lang-${lang}`}>
-                            {lang === "en" ? "English" : lang === "fr" ? "French" : lang === "es" ? "Spanish" : "German"}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
+                    <Separator />
+                    <section>
+                      <h3 className="text-xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                        Language
+                      </h3>
+                      <div className="space-y-3">
+                        {LANGUAGE_OPTIONS.map(({ code, label }) => (
+                          <div key={code} className="flex items-center gap-2">
+                            <Checkbox
+                              id={`lang-${code}`}
+                              checked={languages.includes(code)}
+                              onCheckedChange={checked =>
+                                handleLanguageToggle(code, checked as boolean)
+                              }
+                            />
+                            <Label htmlFor={`lang-${code}`} className="cursor-pointer font-normal">
+                              {label}
+                            </Label>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
                   </>
                 )}
               </div>
-              <div className="flex justify-end">
-                <Button
-                  onClick={() => {
-                    setSources(
-                      contentType === "books"
-                        ? ["openlibrary", "gutenberg", "google", "internetarchive", "librivox", "feedbooks"]
-                        : contentType === "papers"
-                        ? ["arxiv", "semanticscholar"]
-                        : ["lnmtl", "royalroad", "webnovel"]
-                    );
-                    setLanguages([]);
-                  }}
-                >
-                  Reset Filters
+
+              <div className="flex justify-between pt-4 border-t">
+                <Button variant="ghost" onClick={resetFilters}>
+                  Reset all
                 </Button>
+                <SheetTrigger asChild>
+                  <Button>Apply</Button>
+                </SheetTrigger>
               </div>
             </SheetContent>
           </Sheet>
+
+          {!loading && !error && results.length > 0 && (
+            <span className="text-sm text-muted-foreground ml-auto">
+              {results.length.toLocaleString()} result{results.length !== 1 ? "s" : ""}
+            </span>
+          )}
         </div>
 
-        {/* Tabs for Books Only */}
+        {/* Active filter chips */}
+        <AnimatePresence initial={false}>
+          {(disabledSources.length > 0 || languages.length > 0) && (
+            <motion.div
+              key="chips"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.18 }}
+              className="flex flex-wrap gap-2 overflow-hidden"
+            >
+              {disabledSources.map(source => (
+                <motion.button
+                  key={`off-${source}`}
+                  layout
+                  initial={{ opacity: 0, scale: 0.85 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85 }}
+                  onClick={() => handleSourceToggle(source, true)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border border-dashed border-border text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+                  title={`Re-enable ${SOURCE_LABELS[source]}`}
+                >
+                  <span className="line-through">{SOURCE_LABELS[source]}</span>
+                  <span aria-hidden="true">+</span>
+                </motion.button>
+              ))}
+
+              {languages.map(lang => (
+                <motion.button
+                  key={`lang-${lang}`}
+                  layout
+                  initial={{ opacity: 0, scale: 0.85 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.85 }}
+                  onClick={() => handleLanguageToggle(lang, false)}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-secondary text-secondary-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                >
+                  {LANGUAGE_OPTIONS.find(l => l.code === lang)?.label ?? lang}
+                  <X className="h-3 w-3" aria-hidden="true" />
+                </motion.button>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Category tabs (books only) */}
         {contentType === "books" && (
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
-            <TabsList className="grid grid-cols-5 sm:w-[600px]">
-              <TabsTrigger value="all">All</TabsTrigger>
-              <TabsTrigger value="fiction">Fiction</TabsTrigger>
-              <TabsTrigger value="nonfiction">Non-Fiction</TabsTrigger>
-              <TabsTrigger value="science">Science</TabsTrigger>
-              <TabsTrigger value="history">History</TabsTrigger>
+          <Tabs
+            value={activeTab}
+            onValueChange={v => { setActiveTab(v); setCurrentPage(1); }}
+          >
+            <TabsList>
+              {BOOK_TABS.map(tab => (
+                <TabsTrigger key={tab.value} value={tab.value}>
+                  {tab.label}
+                </TabsTrigger>
+              ))}
             </TabsList>
           </Tabs>
         )}
 
-        {/* Search Bar */}
-        <form onSubmit={handleSearch} className="relative mb-8">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
-          <Input
-            placeholder={`Search ${contentType} by title, author, or keyword...`}
-            className="pl-10 h-12"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </form>
-
         {/* Results */}
         {loading ? (
-          <div className="flex justify-center items-center py-20">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-          </div>
-        ) : paginatedResults.length > 0 ? (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 justify-center">
-            {paginatedResults.map((item) => (
-              <BookCard key={item.id} book={item} />
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+            {Array.from({ length: 10 }).map((_, i) => (
+              <BookCardSkeleton key={i} />
             ))}
           </div>
-        ) : (
-          <div className="text-center py-20">
-            <p className="text-muted-foreground">No {contentType} found. Try adjusting your search or filters.</p>
+
+        ) : error ? (
+          <div className="flex flex-col items-center justify-center py-24 gap-4 text-center">
+            <AlertCircle className="h-10 w-10 text-destructive/60" />
+            <p className="text-muted-foreground max-w-sm text-sm">{error}</p>
+            <Button variant="outline" onClick={() => setCurrentPage(p => p)}>
+              Try again
+            </Button>
           </div>
+
+        ) : results.length === 0 ? (
+          <NoResultsState
+            title="No results found"
+            description={
+              searchQuery
+                ? `No ${contentType} matched "${searchQuery}". Try different keywords or adjust your filters.`
+                : `No ${contentType} found for the current filters.`
+            }
+            action={{ label: "Clear search & filters", onClick: clearSearch }}
+          />
+
+        ) : (
+          <motion.div
+            className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5"
+            initial="hidden"
+            animate="show"
+            variants={{
+              hidden: {},
+              show: { transition: { staggerChildren: 0.045 } },
+            }}
+          >
+            {results.map((item, i) => (
+              <motion.div
+                key={itemKey(item, i)}
+                variants={{
+                  hidden: { opacity: 0, y: 14 },
+                  show: { opacity: 1, y: 0, transition: { duration: 0.28, ease: "easeOut" } },
+                }}
+              >
+                <BookCard book={item} index={i % 5} />
+              </motion.div>
+            ))}
+          </motion.div>
         )}
 
         {/* Pagination */}
-        {!loading && results.length > 0 && (
-          <div className="flex justify-center mt-10">
-            <div className="flex space-x-1">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage === 1}
-                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
-              >
-                Previous
-              </Button>
-              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                let pageNum = i + 1;
-                if (currentPage > 3 && totalPages > 5) {
-                  pageNum = currentPage - 2 + i;
-                  if (pageNum > totalPages) pageNum = totalPages - (4 - i);
-                }
-                return (
-                  <Button
-                    key={i}
-                    variant="outline"
-                    size="sm"
-                    className={pageNum === currentPage ? "bg-primary text-primary-foreground" : ""}
-                    onClick={() => setCurrentPage(pageNum)}
-                  >
-                    {pageNum}
-                  </Button>
-                );
-              })}
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={currentPage === totalPages}
-                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
-              >
-                Next
-              </Button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+        {!loading && !error && totalPages > 1 && (
+          <nav className="flex justify-center items-center gap-1 pt-4" aria-label="Pagination">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage(p => p - 1)}
+            >
+              Prev
+            </Button>
 
-function BookCard({ book }: { book: ExtendedBook }) {
-  const getSourceBadge = (source: string) => {
-    switch (source) {
-      case "openlibrary": return "Open Library";
-      case "gutenberg": return "Gutenberg";
-      case "google": return "Google Books";
-      case "internetarchive": return "Internet Archive";
-      case "librivox": return "LibriVox";
-      case "feedbooks": return "Feedbooks";
-      case "arxiv": return "arXiv";
-      case "semanticscholar": return "Semantic Scholar";
-      case "lnmtl": return "LNMTL";
-      case "royalroad": return "Royal Road";
-      case "webnovel": return "Webnovel";
-      default: return source;
-    }
-  };
+            {pages[0] > 1 && (
+              <>
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(1)}>
+                  1
+                </Button>
+                {pages[0] > 2 && (
+                  <span className="px-1 text-sm text-muted-foreground select-none">...</span>
+                )}
+              </>
+            )}
 
-  return (
-    <div className="bg-card rounded-lg overflow-hidden shadow-sm transition-transform duration-300 hover:scale-105 hover:shadow-md">
-      <div className="aspect-[2/3] bg-muted relative">
-        {book.coverImage ? (
-          <img src={book.coverImage} alt={`Cover of ${book.title}`} className="object-cover w-full h-full" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-muted">
-            <BookOpen className="h-12 w-12 text-muted-foreground opacity-30" />
-          </div>
+            {pages.map(n => (
+              <Button
+                key={n}
+                variant={n === currentPage ? "default" : "outline"}
+                size="sm"
+                onClick={() => setCurrentPage(n)}
+                aria-current={n === currentPage ? "page" : undefined}
+              >
+                {n}
+              </Button>
+            ))}
+
+            {pages[pages.length - 1] < totalPages && (
+              <>
+                {pages[pages.length - 1] < totalPages - 1 && (
+                  <span className="px-1 text-sm text-muted-foreground select-none">...</span>
+                )}
+                <Button variant="outline" size="sm" onClick={() => setCurrentPage(totalPages)}>
+                  {totalPages}
+                </Button>
+              </>
+            )}
+
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={currentPage === totalPages}
+              onClick={() => setCurrentPage(p => p + 1)}
+            >
+              Next
+            </Button>
+          </nav>
         )}
-        <div className="absolute top-2 right-2">
-          <span className="bg-primary/80 text-primary-foreground text-xs px-2 py-1 rounded-full">
-            {getSourceBadge(book.source)}
-          </span>
-        </div>
-      </div>
-      <div className="p-4">
-        <h3 className="font-semibold mb-1 line-clamp-1">{book.title}</h3>
-        <p className="text-sm text-muted-foreground mb-2 line-clamp-1">
-          {book.authors && book.authors.length > 0 ? book.authors.join(", ") : "Unknown Author"}
-        </p>
-        {["arxiv", "semanticscholar"].includes(book.source) ? (
-          <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-            {book.abstract || "No abstract available"}
-          </p>
-        ) : ["lnmtl", "royalroad", "webnovel"].includes(book.source) ? (
-          <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-            {book.description || "No description available"}
-          </p>
-        ) : (
-          <div className="flex justify-between items-center">
-            <span className="text-sm">{book.rating && book.rating > 0 ? `${book.rating.toFixed(1)} ★` : "No rating"}</span>
-          </div>
-        )}
-        <Button variant="ghost" size="sm" asChild>
-          <Link href={`/reader/${book.id}`}>
-            <BookOpen className="h-4 w-4 mr-1" />
-            Read
-          </Link>
-        </Button>
-      </div>
+      </main>
     </div>
   );
 }

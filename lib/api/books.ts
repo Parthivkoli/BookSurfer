@@ -13,7 +13,8 @@ const API_ENDPOINTS = {
 
 // Cache setup (in-memory for simplicity; consider Redis for production)
 const cache: Map<string, { data: any; timestamp: number }> = new Map();
-const CACHE_TTL = 15 * 60 * 1000; // 15 minutes in milliseconds
+// Increased cache TTL from 15 minutes to 24 hours for better performance
+const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
 // Content filtering options - applied to all sources
 const CONTENT_FILTERS = {
@@ -21,7 +22,7 @@ const CONTENT_FILTERS = {
     "erotic", "explicit", "adult", "xxx", "mature content",
     "sexual content", "18+", "r-rated", "x-rated", "pornographic"
   ],
-  minimumRating: 3.0,
+  minimumRating: 0, // Allow unrated books (will display with default 4.0 if hardcoded or 0 if unrated)
   approvedCategories: [
     "fiction", "non-fiction", "classic", "literature", "biography",
     "history", "science", "philosophy", "education", "reference",
@@ -43,43 +44,49 @@ function applyContentFilters(books: Book[]): Book[] {
     );
     
     if (hasAdultContent) return false;
-    if ((book.rating ?? 0) < CONTENT_FILTERS.minimumRating) return false;
+    if (book.rating !== undefined && book.rating < CONTENT_FILTERS.minimumRating) return false;
     
-    if (book.categories && book.categories.length > 0) {
-      const hasApprovedCategory = book.categories.some(category => 
-        CONTENT_FILTERS.approvedCategories.some(approved => 
-          category.toLowerCase().includes(approved.toLowerCase())
-        )
-      );
-      if (!hasApprovedCategory) return false;
-    }
+    // if (book.categories && book.categories.length > 0) {
+    //   const hasApprovedCategory = book.categories.some(category => 
+    //     CONTENT_FILTERS.approvedCategories.some(approved => 
+    //       category.toLowerCase().includes(approved.toLowerCase())
+    //     )
+    //   );
+    //   if (!hasApprovedCategory) return false;
+    // }
     
     return true;
   });
 }
 
+import { createCacheKey, searchCache } from "@/lib/cache";
+
 /**
- * Generic fetch utility with caching and retry logic
+ * Generic fetch utility with robust error handling.
+ * Next.js native fetch handles caching when executed on the server.
+ * When on client, this acts as a normal fetch.
  * @param url - The URL to fetch
- * @param cacheKey - Unique key for caching
+ * @param cacheTags - Cache tags for Next.js cache revalidation
+ * @param revalidate - Cache TTL in seconds
  * @returns Fetched data
  */
-async function fetchWithCache(url: string, cacheKey: string): Promise<any> {
-  const cached = cache.get(cacheKey);
-  const now = Date.now();
-
-  if (cached && now - cached.timestamp < CACHE_TTL) {
-    console.log(`Cache hit for ${cacheKey}`);
-    return cached.data;
-  }
-
-  const MAX_RETRIES = 3;
+async function fetchWithRetry(url: string, revalidate: number = 3600, timeoutMs: number = 6000): Promise<any> {
+  const MAX_RETRIES = 2;
   let retries = 0;
 
   while (retries < MAX_RETRIES) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, timeoutMs);
+
     try {
       console.log(`Fetching URL: ${url} (Attempt ${retries + 1})`);
-      const response = await fetch(url, { cache: "no-store" });
+      const response = await fetch(url, { 
+        next: { revalidate },
+        signal: controller.signal,
+      });
+      
       if (!response.ok) {
         const errorText = await response.text().catch(() => "No error details available");
         if (response.status >= 500 && retries < MAX_RETRIES - 1) {
@@ -97,7 +104,7 @@ async function fetchWithCache(url: string, cacheKey: string): Promise<any> {
         data = await response.json();
       } else if (contentType.includes("application/xml") || contentType.includes("text/xml")) {
         const text = await response.text();
-        const parser = new DOMParser();
+        const parser = new (typeof DOMParser !== 'undefined' ? DOMParser : require('xmldom').DOMParser)();
         const xmlDoc = parser.parseFromString(text, "text/xml");
         data = xmlToJson(xmlDoc.documentElement);
       } else if (contentType.includes("text/html")) {
@@ -107,20 +114,28 @@ async function fetchWithCache(url: string, cacheKey: string): Promise<any> {
         data = await response.text();
       }
 
-      cache.set(cacheKey, { data, timestamp: now });
-      console.log(`Fetched and cached data for ${cacheKey}`);
       return data;
     } catch (error) {
-      if (error instanceof TypeError && error.message.includes("Failed to fetch") && retries < MAX_RETRIES - 1) {
+      const isAbort = (error as any)?.name === "AbortError";
+      if (isAbort && retries < MAX_RETRIES - 1) {
+        retries++;
+        await new Promise(resolve => setTimeout(resolve, 1000 * retries));
+        continue;
+      }
+
+      if (error instanceof TypeError && error.message.includes("fetch") && retries < MAX_RETRIES - 1) {
         retries++;
         await new Promise(resolve => setTimeout(resolve, 1000 * retries));
         continue;
       }
       console.error(`Fetch failed after ${retries + 1} attempts for ${url}:`, error);
       throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }
+
 
 /**
  * Helper function to convert XML to JSON
@@ -173,24 +188,28 @@ function xmlToJson(xml: Element): any {
  * @param params - Search parameters
  * @returns Array of Book objects
  */
-export async function searchOpenLibrary(params: BookSearchParams): Promise<Book[]> {
+export async function searchOpenLibrary(params: BookSearchParams): Promise<{ books: Book[]; totalItems: number }> {
   const { query = "", page = 1, limit = 10, subject, sort } = params;
+  
+  // Handle wildcard query which causes 422 on Open Library
+  const normalizedQuery = (query === "*" || !query) ? "" : query;
+  
   const queryParams = new URLSearchParams({
-    q: query || "*:*",
+    q: normalizedQuery || "classic",
     page: page.toString(),
     limit: limit.toString(),
-    has_fulltext: "true",
     ...(subject && { subject }),
-    ...(sort && { sort }),
+    // Open Library does not reliably support `sort=relevance` (it can return 500).
+    // When users choose "relevance" in the UI, just omit the sort and let Open Library default.
+    ...(sort && sort !== "relevance" && { sort }),
   });
 
   const url = `${API_ENDPOINTS.OPEN_LIBRARY}?${queryParams.toString()}`;
-  const cacheKey = `openlibrary-${query}-${page}-${limit}-${subject || ""}-${sort || ""}`;
 
   try {
-    const data = await fetchWithCache(url, cacheKey);
+    const data = await fetchWithRetry(url, 60);
     const books = (data.docs || []).map((book: any) => ({
-      id: book.key || `openlibrary-${book.cover_i || Math.random().toString(36).slice(2)}`,
+      id: book.key ? book.key.replace(/^\//, "") : `openlibrary-${book.cover_i || Math.random().toString(36).slice(2)}`,
       title: book.title || "Unknown Title",
       authors: Array.isArray(book.author_name) ? book.author_name : undefined,
       author: Array.isArray(book.author_name) ? book.author_name[0] : undefined,
@@ -205,10 +224,13 @@ export async function searchOpenLibrary(params: BookSearchParams): Promise<Book[
       rating: book.rating_average,
     }));
     
-    return applyContentFilters(books);
+    return {
+      books: applyContentFilters(books),
+      totalItems: data.numFound || books.length,
+    };
   } catch (error) {
     console.error("Open Library search failed:", error);
-    return [];
+    return { books: [], totalItems: 0 };
   }
 }
 
@@ -217,19 +239,22 @@ export async function searchOpenLibrary(params: BookSearchParams): Promise<Book[
  * @param params - Search parameters
  * @returns Array of Book objects
  */
-export async function searchGutenberg(params: BookSearchParams): Promise<Book[]> {
+export async function searchGutenberg(params: BookSearchParams): Promise<{ books: Book[]; totalItems: number }> {
   const { query = "", page = 1, limit = 10, languages } = params;
+  
+  // Handle wildcard query for Gutendex
+  const normalizedQuery = (query === "*" || !query) ? "" : query;
+  
   const queryParams = new URLSearchParams({
-    search: query || "",
+    search: normalizedQuery,
     page: page.toString(),
     ...(languages?.length && { languages: languages.join(",") }),
   });
 
   const url = `${API_ENDPOINTS.GUTENBERG}?${queryParams.toString()}`;
-  const cacheKey = `gutenberg-${query}-${page}-${languages?.join(",") || ""}`;
 
   try {
-    const data = await fetchWithCache(url, cacheKey);
+    const data = await fetchWithRetry(url, 3600);
     const books = (data.results || []).map((book: any) => ({
       id: `gutenberg-${book.id}`,
       title: book.title || "Unknown Title",
@@ -249,10 +274,13 @@ export async function searchGutenberg(params: BookSearchParams): Promise<Book[]>
       rating: 4.0,
     })).filter((book: Book) => book.downloadUrl !== undefined);
     
-    return applyContentFilters(books);
+    return {
+      books: applyContentFilters(books),
+      totalItems: data.count || books.length,
+    };
   } catch (error) {
     console.error("Gutenberg search failed:", error);
-    return [];
+    return { books: [], totalItems: 0 };
   }
 }
 
@@ -261,21 +289,24 @@ export async function searchGutenberg(params: BookSearchParams): Promise<Book[]>
  * @param params - Search parameters
  * @returns Array of Book objects
  */
-export async function searchGoogleBooks(params: BookSearchParams): Promise<Book[]> {
+export async function searchGoogleBooks(params: BookSearchParams): Promise<{ books: Book[]; totalItems: number }> {
   const { query = "", page = 1, limit = 10 } = params;
+  
+  // Handle wildcard query
+  const normalizedQuery = (query === "*" || !query) ? "free ebooks" : query;
+  
   const startIndex = (page - 1) * limit;
   const queryParams = new URLSearchParams({
-    q: query || "free ebooks",
+    q: normalizedQuery,
     startIndex: startIndex.toString(),
     maxResults: limit.toString(),
     filter: "free-ebooks",
   });
 
   const url = `${API_ENDPOINTS.GOOGLE_BOOKS}?${queryParams.toString()}`;
-  const cacheKey = `google-${query}-${startIndex}-${limit}`;
 
   try {
-    const data = await fetchWithCache(url, cacheKey);
+    const data = await fetchWithRetry(url, 3600);
     const books = (data.items || []).map((item: any) => {
       const volumeInfo = item.volumeInfo || {};
       const accessInfo = item.accessInfo || {};
@@ -296,10 +327,13 @@ export async function searchGoogleBooks(params: BookSearchParams): Promise<Book[
       };
     }).filter((book: Book) => book.downloadUrl !== undefined);
     
-    return applyContentFilters(books);
+    return {
+      books: applyContentFilters(books),
+      totalItems: data.totalItems || books.length,
+    };
   } catch (error) {
     console.error("Google Books search failed:", error);
-    return [];
+    return { books: [], totalItems: 0 };
   }
 }
 
@@ -308,10 +342,14 @@ export async function searchGoogleBooks(params: BookSearchParams): Promise<Book[
  * @param params - Search parameters
  * @returns Array of Book objects
  */
-export async function searchInternetArchive(params: BookSearchParams): Promise<Book[]> {
+export async function searchInternetArchive(params: BookSearchParams): Promise<{ books: Book[]; totalItems: number }> {
   const { query = "", page = 1, limit = 10 } = params;
+  
+  // Handle wildcard query
+  const normalizedQuery = (query === "*" || !query) ? "" : query;
+  
   const queryParams = new URLSearchParams({
-    q: query ? `title:(${query}) AND mediatype:texts` : "mediatype:texts",
+    q: normalizedQuery ? `title:(${normalizedQuery}) AND mediatype:texts` : "mediatype:texts",
     fl: "identifier,title,creator,description,subject,language,year,downloads,avg_rating",
     sort: "avg_rating desc",
     output: "json",
@@ -320,17 +358,16 @@ export async function searchInternetArchive(params: BookSearchParams): Promise<B
   });
 
   const url = `${API_ENDPOINTS.INTERNET_ARCHIVE}?${queryParams.toString()}`;
-  const cacheKey = `internetarchive-${query}-${page}-${limit}`;
 
   try {
-    const data = await fetchWithCache(url, cacheKey);
+    const data = await fetchWithRetry(url, 3600);
     const books = (data.response?.docs || []).map((book: any) => ({
       id: `internetarchive-${book.identifier}`,
       title: book.title || "Unknown Title",
       authors: Array.isArray(book.creator) ? book.creator : book.creator ? [book.creator] : undefined,
       author: Array.isArray(book.creator) && book.creator.length ? book.creator[0] : book.creator,
       coverImage: `https://archive.org/services/img/${book.identifier}`,
-      description: book.description,
+      description: book.description?.[0] || book.description || undefined,
       publishedDate: book.year,
       categories: Array.isArray(book.subject) ? book.subject : book.subject ? [book.subject] : undefined,
       language: Array.isArray(book.language) ? book.language : book.language ? [book.language] : undefined,
@@ -340,10 +377,13 @@ export async function searchInternetArchive(params: BookSearchParams): Promise<B
       rating: book.avg_rating,
     }));
     
-    return applyContentFilters(books);
+    return {
+      books: applyContentFilters(books),
+      totalItems: data.response?.numFound || books.length,
+    };
   } catch (error) {
     console.error("Internet Archive search failed:", error);
-    return [];
+    return { books: [], totalItems: 0 };
   }
 }
 
@@ -352,20 +392,23 @@ export async function searchInternetArchive(params: BookSearchParams): Promise<B
  * @param params - Search parameters
  * @returns Array of Book objects
  */
-export async function searchLibriVox(params: BookSearchParams): Promise<Book[]> {
+export async function searchLibriVox(params: BookSearchParams): Promise<{ books: Book[]; totalItems: number }> {
   const { query = "", page = 1, limit = 10 } = params;
+  
+  // Handle wildcard query
+  const normalizedQuery = (query === "*" || !query) ? "" : query;
+  
   const queryParams = new URLSearchParams({
-    title: query || "",
+    title: normalizedQuery,
     offset: ((page - 1) * limit).toString(),
     limit: limit.toString(),
     format: "json",
   });
 
   const url = `${API_ENDPOINTS.LIBRIVOX}?${queryParams.toString()}`;
-  const cacheKey = `librivox-${query}-${page}-${limit}`;
 
   try {
-    const data = await fetchWithCache(url, cacheKey);
+    const data = await fetchWithRetry(url, 3600);
     const books = (data.books || []).map((book: any) => ({
       id: `librivox-${book.id}`,
       title: book.title || "Unknown Title",
@@ -382,10 +425,13 @@ export async function searchLibriVox(params: BookSearchParams): Promise<Book[]> 
       rating: 4.0,
     }));
     
-    return applyContentFilters(books);
+    return {
+      books: applyContentFilters(books),
+      totalItems: data.num_results || books.length,
+    };
   } catch (error) {
     console.error("LibriVox search failed:", error);
-    return [];
+    return { books: [], totalItems: 0 };
   }
 }
 
@@ -394,13 +440,12 @@ export async function searchLibriVox(params: BookSearchParams): Promise<Book[]> 
  * @param params - Search parameters
  * @returns Array of Book objects
  */
-export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]> {
+export async function searchFeedbooks(params: BookSearchParams): Promise<{ books: Book[]; totalItems: number }> {
   const { query, limit = 10 } = params;
   const url = API_ENDPOINTS.FEEDBOOKS;
-  const cacheKey = `feedbooks-all`;
 
   try {
-    const data = await fetchWithCache(url, cacheKey);
+    const data = await fetchWithRetry(url, 3600);
     const $ = load(data);
 
     let books: Book[] = [];
@@ -437,7 +482,8 @@ export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]>
     });
 
     books = books.filter(book => book.downloadUrl !== undefined);
-    if (query) {
+    
+    if (query && query !== "*") {
       const queryLower = query.toLowerCase();
       books = books.filter((book) =>
         book.title.toLowerCase().includes(queryLower) ||
@@ -446,10 +492,14 @@ export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]>
       );
     }
 
-    return applyContentFilters(books.slice(0, limit));
+    const filteredBooks = applyContentFilters(books.slice(0, limit));
+    return {
+      books: filteredBooks,
+      totalItems: books.length,
+    };
   } catch (error) {
     console.error("Feedbooks search failed:", error);
-    return [];
+    return { books: [], totalItems: 0 };
   }
 }
 
@@ -458,12 +508,12 @@ export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]>
  * @param params - Search parameters with optional source filter
  * @returns Books and total count
  */
-export async function searchBooks(params: BookSearchParams & { sources?: ("openlibrary" | "gutenberg" | "google")[] }): Promise<{
+export async function searchBooks(params: BookSearchParams & { sources?: ("openlibrary" | "gutenberg" | "google" | "internetarchive" | "librivox" | "feedbooks")[] }): Promise<{
   books: Book[];
   totalItems: number;
 }> {
   const sources = params.sources || ["openlibrary", "gutenberg", "google"];
-  const searchFunctions: { [key: string]: (p: BookSearchParams) => Promise<Book[]> } = {
+  const searchFunctions: { [key: string]: (p: BookSearchParams) => Promise<{ books: Book[]; totalItems: number }> } = {
     openlibrary: searchOpenLibrary,
     gutenberg: searchGutenberg,
     google: searchGoogleBooks,
@@ -473,39 +523,74 @@ export async function searchBooks(params: BookSearchParams & { sources?: ("openl
   };
 
   try {
-    const promises = sources.map((source) => searchFunctions[source](params));
-    const results = await Promise.allSettled(promises);
+    const validSources = sources.filter((source) => source in searchFunctions);
+    const desiredLimit = params.limit ?? 12;
+
+    const queryKey = params.query?.trim() || "";
+    const languagesKey = (params.languages ?? []).slice().sort().join(",");
+    const sourcesKey = validSources.slice().sort().join(",");
+
+    const cacheKey = createCacheKey(
+      "search",
+      queryKey,
+      params.page ?? 1,
+      desiredLimit,
+      params.subject ?? "",
+      params.sort ?? "relevance",
+      languagesKey || undefined,
+      sourcesKey || undefined
+    );
+
+    const cached = searchCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
 
     let allBooks: Book[] = [];
     let totalItems = 0;
 
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        allBooks = [...allBooks, ...result.value];
-        totalItems += {
-          openlibrary: 10000,
-          gutenberg: 60000,
-          google: 1000,
-          internetarchive: 20000,
-          librivox: 15000,
-          feedbooks: 5000
-        }[sources[index]] || 0;
+    // Speed + reliability: try sources in order and stop once we have enough books.
+    for (const source of validSources) {
+      if (allBooks.length >= desiredLimit) break;
+
+      const remaining = desiredLimit - allBooks.length;
+      // Ask each source for extra because content filters may remove items.
+      const perSourceLimit = Math.max(remaining * 2, 10);
+
+      const res = await searchFunctions[source]({ ...params, limit: perSourceLimit });
+      if (res?.books?.length) {
+        allBooks = allBooks.concat(res.books);
+        totalItems += res.totalItems ?? res.books.length;
       } else {
-        console.warn(`Search failed for source ${sources[index]}:`, result.reason);
+        console.warn(`Search returned no books for source ${source}`);
       }
-    });
+    }
 
-    allBooks.sort((a, b) => {
-      const ratingA = a.rating ?? 0;
-      const ratingB = b.rating ?? 0;
-      if (ratingB !== ratingA) return ratingB - ratingA;
-      return a.title.localeCompare(b.title);
-    });
+    // Ensure we always have something to show.
+    // If every selected source fails, fall back to OpenLibrary with a safe default query.
+    if (allBooks.length === 0) {
+      const fallbackQuery = queryKey ? queryKey : "*";
+      const fallbackRes = await searchOpenLibrary({
+        ...params,
+        query: fallbackQuery,
+        // Override requested limit so we have room for filtering.
+        limit: desiredLimit * 2,
+      });
+      allBooks = fallbackRes.books;
+      totalItems = fallbackRes.totalItems ?? allBooks.length;
+    }
 
-    return {
-      books: allBooks,
+    const result = {
+      books: allBooks.slice(0, desiredLimit),
       totalItems,
     };
+
+    // Cache only successful (non-empty) results to avoid "blank" caching.
+    if (result.books.length > 0) {
+      searchCache.set(cacheKey, result);
+    }
+
+    return result;
   } catch (error) {
     console.error("Multi-source search failed:", error);
     return { books: [], totalItems: 0 };
@@ -522,7 +607,7 @@ export async function getBookById(id: string): Promise<Book | null> {
     "gutenberg-": async () => {
       const gutenbergId = id.replace("gutenberg-", "");
       const url = `${API_ENDPOINTS.GUTENBERG}/${gutenbergId}`;
-      const data = await fetchWithCache(url, `gutenberg-book-${gutenbergId}`);
+      const data = await fetchWithRetry(url, 300);
       if (!data) return null;
       return {
         id,
@@ -536,14 +621,18 @@ export async function getBookById(id: string): Promise<Book | null> {
         language: data.languages,
         pageCount: undefined,
         source: "gutenberg" as const,
-        downloadUrl: data.formats?.["text/html"] || data.formats?.["application/epub+zip"] || data.formats?.["text/plain"],
+        downloadUrl: 
+          data.formats?.["text/plain; charset=utf-8"] || 
+          data.formats?.["text/plain"] || 
+          data.formats?.["text/html"] || 
+          data.formats?.["application/epub+zip"],
         rating: 4.0,
       };
     },
     "google-": async () => {
       const googleId = id.replace("google-", "");
       const url = `${API_ENDPOINTS.GOOGLE_BOOKS}/${googleId}`;
-      const data = await fetchWithCache(url, `google-book-${googleId}`);
+      const data = await fetchWithRetry(url, 300);
       if (!data) return null;
       const volumeInfo = data.volumeInfo || {};
       const accessInfo = data.accessInfo || {};
@@ -566,7 +655,7 @@ export async function getBookById(id: string): Promise<Book | null> {
     "internetarchive-": async () => {
       const archiveId = id.replace("internetarchive-", "");
       const url = `https://archive.org/metadata/${archiveId}`;
-      const data = await fetchWithCache(url, `internetarchive-book-${archiveId}`);
+      const data = await fetchWithRetry(url, 300);
       if (!data) return null;
       const metadata = data.metadata || {};
       return {
@@ -588,7 +677,7 @@ export async function getBookById(id: string): Promise<Book | null> {
     "librivox-": async () => {
       const librivoxId = id.replace("librivox-", "");
       const url = `${API_ENDPOINTS.LIBRIVOX}?id=${librivoxId}&format=json`;
-      const data = await fetchWithCache(url, `librivox-book-${librivoxId}`);
+      const data = await fetchWithRetry(url, 300);
       if (!data) return null;
       const book = data.books?.[0] || {};
       return {
@@ -610,7 +699,7 @@ export async function getBookById(id: string): Promise<Book | null> {
     "feedbooks-": async () => {
       const feedbooksId = id.replace("feedbooks-", "");
       const url = `${API_ENDPOINTS.FEEDBOOKS}`;
-      const data = await fetchWithCache(url, `feedbooks-book-${feedbooksId}`);
+      const data = await fetchWithRetry(url, 300);
       if (!data) return null;
       const $ = load(data);
       const entry = $("entry").filter((_, e) => $(e).find("id").text().includes(feedbooksId)).first();
@@ -642,7 +731,7 @@ export async function getBookById(id: string): Promise<Book | null> {
     },
     "": async () => {
       const url = `https://openlibrary.org/works/${id}.json`;
-      const data = await fetchWithCache(url, `openlibrary-book-${id}`);
+      const data = await fetchWithRetry(url, 300);
       if (!data) return null;
       const coverImage = data.covers?.[0] ? `https://covers.openlibrary.org/b/id/${data.covers[0]}-M.jpg` : undefined;
       return {
@@ -692,16 +781,10 @@ export async function getBookContent(id: string): Promise<string | null> {
     }
 
     const url = book.downloadUrl || book.pdfUrl;
-    const cacheKey = `book-content-${id}`;
-    const cachedContent = cache.get(cacheKey);
-    const now = Date.now();
-
-    if (cachedContent && now - cachedContent.timestamp < CACHE_TTL) {
-      return cachedContent.data as string;
-    }
-
-    const response = await fetch(url!, { cache: "no-store" });
+    console.log(`Fetching book content from URL: ${url}`);
+    const response = await fetch(url!, { next: { revalidate: 3600 } });
     if (!response.ok) {
+      console.error(`Failed to fetch book content: ${response.status} ${response.statusText}`);
       throw new Error(`HTTP error! Status: ${response.status} for URL: ${url}`);
     }
 
@@ -711,19 +794,24 @@ export async function getBookContent(id: string): Promise<string | null> {
     if (contentType.includes("text/plain")) {
       content = await response.text();
     } else if (contentType.includes("application/epub+zip")) {
-      const arrayBuffer = await response.arrayBuffer();
-      content = "EPUB content not directly readable as text. Consider using a library like epub.js.";
+      content = "EPUB_FILE_DETECTED"; // Signal to ReaderClient to use epub.js directly
+    } else if (contentType.includes("application/pdf")) {
+      content = "PDF_FILE_DETECTED"; // Signal to ReaderClient to use pdf.js directly
     } else if (contentType.includes("text/html")) {
       const text = await response.text();
+      // Improved cleaning for Gutenberg HTML
       const $ = load(text);
-      content = $("body").text().trim() || "No readable text found in HTML.";
-    } else if (contentType.includes("application/pdf")) {
-      content = "PDF content not directly readable as text. Use a PDF parser library.";
+      
+      // Remove boilerplate, nav, and scripts
+      $("script, style, nav, footer, .header, #menu, .links").remove();
+      
+      // Try to find main content areas in Gutenberg or others
+      const mainContent = $(".bodytext, #content, main, article").text().trim();
+      content = mainContent || $("body").text().trim() || "No readable content found.";
     } else {
       content = await response.text();
     }
 
-    cache.set(cacheKey, { data: content, timestamp: now });
     return content;
   } catch (error) {
     console.error(`Error fetching content for book ID ${id}:`, error);
@@ -756,12 +844,12 @@ export async function getRecommendedBooks(id: string, limit: number = 5): Promis
       searchParams.query = titleWords.length ? titleWords.join(' ') : "classic literature";
     }
     
-    const { books } = await searchBooks({
+    const result = await searchBooks({
       ...searchParams,
       sources: ["openlibrary", "gutenberg", "google"]
     });
     
-    return books.filter(rec => rec.id !== id).slice(0, limit);
+    return result.books.filter(rec => rec.id !== id).slice(0, limit);
   } catch (error) {
     console.error("Failed to get book recommendations:", error);
     return [];
@@ -776,35 +864,53 @@ export async function getRecommendedBooks(id: string, limit: number = 5): Promis
  */
 export async function getTrendingBooks(limit: number = 10, category?: string): Promise<Book[]> {
   try {
-    const sources: ("openlibrary" | "gutenberg" | "google")[] = ["openlibrary", "gutenberg"];
-    const params: BookSearchParams = {
-      limit: Math.ceil(limit / sources.length) + 5,
+    const cacheKey = createCacheKey("trending", limit, category ?? "");
+    const cached = searchCache.get(cacheKey);
+    if (cached && Array.isArray(cached)) return cached as Book[];
+
+    // Faster approach: prefer OpenLibrary first, then fall back to Gutenberg.
+    // This reduces external requests and avoids long parallel waits/timeouts.
+    const openParams: BookSearchParams = {
+      // Fetch slightly extra in case content filters remove some items
+      limit: Math.ceil(limit * 1.25),
       subject: category,
-      sort: "rating"
+      sort: "rating",
+      page: 1,
+      query: "*",
     };
-    
-    const promises = sources.map(async (source) => {
-      switch (source) {
-        case "openlibrary":
-          return searchOpenLibrary(params);
-        case "gutenberg":
-          return searchGutenberg({ ...params, query: category || "popular" });
-        default:
-          return [];
-      }
-    });
-    
-    const results = await Promise.allSettled(promises);
-    
-    let allBooks: Book[] = [];
-    results.forEach(result => {
-      if (result.status === "fulfilled") {
-        allBooks = [...allBooks, ...result.value];
-      }
-    });
-    
+
+    const openResult = await searchOpenLibrary(openParams);
+    let allBooks = openResult.books.slice(0, limit);
+
+    if (allBooks.length < limit) {
+      const remaining = limit - allBooks.length;
+      const gutenbergResult = await searchGutenberg({
+        query: category || "popular",
+        page: 1,
+        // Gutenberg paginates by page; `limit` here mainly impacts downstream slicing.
+        limit: Math.max(remaining, 10),
+      });
+      allBooks = [...allBooks, ...gutenbergResult.books].slice(0, limit);
+    }
+
     allBooks.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-    return allBooks.slice(0, limit);
+
+    // If everything fails, try a broader OpenLibrary fallback.
+    if (allBooks.length === 0) {
+      const fallback = await searchOpenLibrary({
+        query: "*",
+        page: 1,
+        limit: limit * 2,
+        sort: "rating",
+      });
+      allBooks = fallback.books.slice(0, limit);
+    }
+
+    if (allBooks.length > 0) {
+      searchCache.set(cacheKey, allBooks);
+    }
+
+    return allBooks;
   } catch (error) {
     console.error("Failed to get trending books:", error);
     return [];
@@ -840,7 +946,7 @@ export async function getNewReleases(limit: number = 10, daysBack: number = 30):
     let allBooks: Book[] = [];
     results.forEach(result => {
       if (result.status === "fulfilled") {
-        allBooks = [...allBooks, ...result.value];
+        allBooks = [...allBooks, ...result.value.books];
       }
     });
     
@@ -874,13 +980,13 @@ export async function getBooksByAuthor(authorName: string, limit: number = 10): 
       sort: "relevance"
     };
     
-    const { books } = await searchBooks({
+    const result = await searchBooks({
       ...params,
       sources: ["openlibrary", "gutenberg", "google"]
     });
     
     const authorNameLower = authorName.toLowerCase();
-    const filteredBooks = books.filter(book => 
+    const filteredBooks = result.books.filter(book => 
       (book.authors?.some(author => author.toLowerCase().includes(authorNameLower)) ||
        book.author?.toLowerCase().includes(authorNameLower)) ?? false
     );

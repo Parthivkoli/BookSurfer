@@ -7,6 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BookOpen, Clock, Star } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 import { useState } from "react";
 
 export default function LibraryPage() {
@@ -67,11 +68,14 @@ export default function LibraryPage() {
               {Object.entries(progress).map(([book, value], index) => (
                 <Card key={book}>
                   <div className="flex">
-                    <div className="w-1/3">
-                      <img 
+                    <div className="w-1/3 relative">
+                      <Image 
                         src={`https://source.unsplash.com/random/300x450?book&sig=${index}`} 
                         alt="Book cover" 
+                        width={100}
+                        height={150}
                         className="object-cover w-full h-full rounded-l-lg"
+                        priority={false}
                       />
                     </div>
                     <div className="w-2/3 p-4">
@@ -117,11 +121,14 @@ export default function LibraryPage() {
               {Array.from({ length: 6 }).map((_, index) => (
                 <Card key={index}>
                   <div className="flex">
-                    <div className="w-1/3">
-                      <img 
+                    <div className="w-1/3 relative">
+                      <Image 
                         src={`https://source.unsplash.com/random/300x450?book&sig=${index + 10}`} 
                         alt="Book cover" 
+                        width={100}
+                        height={150}
                         className="object-cover w-full h-full rounded-l-lg"
+                        priority={false}
                       />
                     </div>
                     <div className="w-2/3 p-4">
@@ -158,10 +165,13 @@ export default function LibraryPage() {
               {Array.from({ length: 8 }).map((_, index) => (
                 <Card key={index}>
                   <div className="aspect-[2/3] relative">
-                    <img 
+                    <Image 
                       src={`https://source.unsplash.com/random/300x450?book&sig=${index + 20}`} 
                       alt="Book cover" 
+                      width={250}
+                      height={375}
                       className="object-cover w-full h-full rounded-t-lg"
+                      priority={false}
                     />
                   </div>
                   <CardContent className="p-4">

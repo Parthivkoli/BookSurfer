@@ -34,6 +34,12 @@ const config: Config = {
           DEFAULT: 'hsl(var(--primary))',
           foreground: 'hsl(var(--primary-foreground))',
         },
+        brand: {
+          navy: 'hsl(var(--brand-navy))',
+          amber: 'hsl(var(--brand-amber))',
+          cream: 'hsl(var(--brand-cream))',
+          midnight: 'hsl(var(--brand-midnight))',
+        },
         secondary: {
           DEFAULT: 'hsl(var(--secondary))',
           foreground: 'hsl(var(--secondary-foreground))',
@@ -60,6 +66,10 @@ const config: Config = {
           '4': 'hsl(var(--chart-4))',
           '5': 'hsl(var(--chart-5))',
         },
+      },
+      fontFamily: {
+        sans: ['var(--font-inter)'],
+        serif: ['var(--font-lora)'],
       },
       keyframes: {
         'accordion-down': {

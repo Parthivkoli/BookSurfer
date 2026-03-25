@@ -1,7 +1,21 @@
 import { getBookById, getBookContent } from "@/lib/api/books";
-import ReaderClient from "./ReaderClient";
 import { Book } from "@/types/book";
 import { notFound } from "next/navigation";
+import dynamic from "next/dynamic";
+import { Suspense } from "react";
+
+// Lazy load ReaderClient to defer heavy dependencies (pdfjs, epubjs, framer-motion)
+const ReaderClient = dynamic(() => import("./ReaderClient"), {
+  loading: () => (
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+      <div className="space-y-4 text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto"></div>
+        <p className="text-slate-300">Loading reader...</p>
+      </div>
+    </div>
+  ),
+  ssr: false, // Reader needs client-side interactivity
+});
 
 // Define the props type to match Next.js's expectation
 interface PageProps {
@@ -42,6 +56,7 @@ export default async function ReaderPage({ params }: PageProps) {
         initialBook={book} 
         initialContent={content || ""} 
         bookId={bookId} 
+        downloadUrl={book.downloadUrl || book.pdfUrl || ""}
       />
     </div>
   );

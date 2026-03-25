@@ -31,6 +31,8 @@ import {
   Menu,
   X,
   MoreVertical,
+  Mic,
+  MicOff,
 } from "lucide-react";
 import { Book } from "@/types/book";
 import {
@@ -67,11 +69,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import { summarizeContent } from "@/lib/utils";
 import { generateAIResponse } from "@/lib/api/ai";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { speechRecognition, SpeechRecognitionOptions } from "@/lib/utils/speech-recognition";
+import { EpubViewer } from "@/components/reader/epub-viewer";
+import { PdfViewer } from "@/components/reader/pdf-viewer";
+import { paginateByWords } from "@/lib/utils";
+import { ReaderToolbar } from "@/components/reader/toolbar";
 
 interface ReaderClientProps {
   initialBook: Book | null;
   initialContent: string;
   bookId: string;
+  downloadUrl?: string;
 }
 
 interface BookWithThemes extends Book {
@@ -82,6 +90,7 @@ export default function ReaderClient({
   initialBook,
   initialContent,
   bookId,
+  downloadUrl,
 }: ReaderClientProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -137,25 +146,61 @@ export default function ReaderClient({
   const floatingTimeout = useRef<NodeJS.Timeout | null>(null);
   const [fabOpen, setFabOpen] = useState(false);
   const longPressTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [isDictating, setIsDictating] = useState(false);
+  const [dictationSupported, setDictationSupported] = useState(false);
+  const [dictationError, setDictationError] = useState("");
+  const [bookFormat, setBookFormat] = useState<"text" | "epub" | "pdf">("text");
+  const [isDistractionFree, setIsDistractionFree] = useState(false);
 
-  // Dynamic Pagination
+  // Format Detection
   useEffect(() => {
+    if (initialContent === "EPUB_FILE_DETECTED") setBookFormat("epub");
+    else if (initialContent === "PDF_FILE_DETECTED") setBookFormat("pdf");
+    else setBookFormat("text");
+  }, [initialContent]);
+
+  // Check if dictation is supported on mount and handle cleanup
+  useEffect(() => {
+    setDictationSupported(speechRecognition.isSupported());
+    return () => {
+      if (speechRecognition.isActive()) {
+        speechRecognition.stop();
+      }
+    };
+  }, []);
+
+  // Dynamic Pagination - Only re-run when content or font settings change
+  useEffect(() => {
+    if (bookFormat !== "text") return;
+    
     if (!initialContent) {
       setContentPages(["No content available."]);
       return;
     }
-    const pages = paginateByWords(initialContent, 400);
-    setContentPages(pages);
-    setBookProgress(Math.round(((currentPage + 1) / pages.length) * 100));
-    const avgReadingSpeed = 250;
-    const wordsLeft = (pages.length - currentPage - 1) * 400;
-    const minutesLeft = Math.ceil(wordsLeft / avgReadingSpeed);
-    setEstimatedTimeLeft(
-      minutesLeft < 60
-        ? `~${minutesLeft} min left`
-        : `~${Math.floor(minutesLeft / 60)}h ${minutesLeft % 60}m left`
-    );
-  }, [initialContent, fontSize, lineHeight, fontFamily, isFullScreen, currentPage, marginSize]);
+    
+    const timer = setTimeout(() => {
+      console.log("Paginating book content...");
+      const pages = paginateByWords(initialContent, 400);
+      setContentPages(pages);
+    }, 0);
+    
+    return () => clearTimeout(timer);
+  }, [initialContent, fontSize, lineHeight, fontFamily, isFullScreen, marginSize, bookFormat]);
+
+  // Handle Progress and Stats - Separate from pagination for performance
+  useEffect(() => {
+    if (contentPages.length > 0) {
+      setBookProgress(Math.round(((currentPage + 1) / contentPages.length) * 100));
+      const avgReadingSpeed = 250;
+      const wordsLeft = (contentPages.length - currentPage - 1) * 400;
+      const minutesLeft = Math.ceil(wordsLeft / avgReadingSpeed);
+      setEstimatedTimeLeft(
+        minutesLeft < 60
+          ? `~${minutesLeft} min left`
+          : `~${Math.floor(minutesLeft / 60)}h ${minutesLeft % 60}m left`
+      );
+    }
+  }, [currentPage, contentPages.length]);
 
   // Load Saved State
   useEffect(() => {
@@ -210,9 +255,13 @@ export default function ReaderClient({
   useEffect(() => {
     if (readingMode === "system") setTheme("system");
     else if (readingMode === "dark") setTheme("dark");
+    else if (readingMode === "oled") setTheme("dark"); // OLED uses dark theme base
+    else if (readingMode === "sepia") setTheme("light"); // Sepia uses light theme base
     else setTheme("light");
 
     document.documentElement.classList.toggle("high-contrast", highContrast);
+    document.documentElement.classList.toggle("theme-sepia", readingMode === "sepia");
+    document.documentElement.classList.toggle("theme-oled", readingMode === "oled");
   }, [readingMode, highContrast, setTheme]);
 
   // Fullscreen Handling
@@ -233,6 +282,31 @@ export default function ReaderClient({
     document.addEventListener("fullscreenchange", handleFullScreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullScreenChange);
   }, []);
+
+  // Distraction-Free Mode Toggle (Key: F)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input or textarea
+      if (
+        e.target instanceof HTMLTextAreaElement || 
+        e.target instanceof HTMLInputElement ||
+        (e.target as HTMLElement).isContentEditable
+      ) {
+        return;
+      }
+      
+      if (e.key.toLowerCase() === 'f') {
+        setIsDistractionFree(prev => !prev);
+        toast({
+          title: isDistractionFree ? "Distraction-Free Mode Off" : "Distraction-Free Mode On",
+          description: isDistractionFree ? "Reading UI elements restored." : "Controls hidden for better focus.",
+          duration: 2000,
+        });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isDistractionFree]);
 
   // Auto-Hide Controls in Fullscreen
   useEffect(() => {
@@ -405,6 +479,73 @@ export default function ReaderClient({
       setAiHistory((prev) => [...prev.slice(-4), { question, answer: result }]);
       setAnswerLoading(false);
     });
+  };
+
+  // Dictation Handler
+  const handleDictation = () => {
+    if (!dictationSupported) {
+      toast({
+        title: "Not Supported",
+        description: "Speech Recognition is not supported in your browser",
+        variant: "destructive",
+        duration: 3000,
+      });
+      return;
+    }
+
+    if (isDictating) {
+      speechRecognition.stop();
+      setIsDictating(false);
+      return;
+    }
+
+    setIsDictating(true);
+    setDictationError("");
+
+    const options: SpeechRecognitionOptions = {
+      language: 'en-US',
+      continuous: false,
+      interimResults: true,
+      onStart: () => {
+        setIsDictating(true);
+        toast({
+          title: "Listening...",
+          description: "Speak your question clearly",
+          duration: 3000,
+        });
+      },
+      onResult: (transcript: string, isFinal: boolean) => {
+        setQuestion(transcript);
+        if (isFinal) {
+          setIsDictating(false);
+          toast({
+            title: "Captured",
+            description: "Click Ask AI to get an answer.",
+            duration: 2000,
+          });
+        }
+      },
+      onError: (error: string) => {
+        setDictationError(error);
+        setIsDictating(false);
+        toast({
+          title: "Dictation error",
+          description: error,
+          variant: "destructive",
+          duration: 3000,
+        });
+      },
+      onEnd: () => {
+        setIsDictating(false);
+      },
+    };
+
+    try {
+      speechRecognition.start(options);
+    } catch (err) {
+      console.error("Manual start failed", err);
+      setIsDictating(false);
+    }
   };
 
   // Improved Text-to-Speech with Highlighting and Start Position
@@ -601,14 +742,7 @@ export default function ReaderClient({
     }
   };
 
-  function paginateByWords(content: string, wordsPerPage = 400): string[] {
-    const words = content.split(/\s+/);
-    const pages: string[] = [];
-    for (let i = 0; i < words.length; i += wordsPerPage) {
-      pages.push(words.slice(i, i + wordsPerPage).join(" "));
-    }
-    return pages.length ? pages : ["No content available."];
-  }
+
 
   // Infinite Scroll for Vertical Mode
   useEffect(() => {
@@ -766,36 +900,74 @@ export default function ReaderClient({
       transition={{ duration: 0.5 }}
     >
       <div
-        className={`min-h-screen flex flex-col ${
-          isFullScreen ? "bg-gray-100 dark:bg-gray-900" : ""
+        className={`min-h-screen flex flex-col bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900 ${
+          isFullScreen ? "" : ""
         }`}
       >
-        {/* Header */}
-        {!isFullScreen && (
-          <div className="flex justify-between items-center p-4 bg-white dark:bg-gray-800 shadow-md md:px-8">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setIsMobileMenuOpen(true)}
-              className="md:hidden"
-            >
-              <Menu className="h-6 w-6" />
-            </Button>
-            <h1 className="text-xl font-bold text-center flex-1">{book.title}</h1>
-            <div className="flex space-x-2">
-              <Button variant="outline" size="icon" onClick={toggleBookmark}>
-                <Bookmark className="h-5 w-5" />
-              </Button>
+        {/* Enhanced Header with Gradient */}
+        {!isFullScreen && !isDistractionFree && (
+          <div className="sticky top-0 z-40 backdrop-blur-md bg-white/80 dark:bg-slate-900/80 border-b border-slate-200/50 dark:border-slate-700/50 shadow-sm">
+            <div className="flex justify-between items-center px-4 md:px-8 py-4">
               <Button
-                variant="outline"
+                variant="ghost"
                 size="icon"
-                onClick={() => setAiPanelOpen(!aiPanelOpen)}
+                onClick={() => setIsMobileMenuOpen(true)}
+                className="md:hidden hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
               >
-                <BookText className="h-5 w-5" />
+                <Menu className="h-6 w-6" />
               </Button>
-              <Button variant="outline" size="icon" onClick={toggleFullScreen}>
-                <Maximize className="h-5 w-5" />
-              </Button>
+              <div className="flex-1 text-center">
+                <h1 className="text-lg md:text-xl font-semibold bg-gradient-to-r from-blue-600 to-purple-600 dark:from-blue-400 dark:to-purple-400 bg-clip-text text-transparent">
+                  {book.title}
+                </h1>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  {book.authors?.[0] && `by ${book.authors[0]}`}
+                </p>
+              </div>
+              <div className="flex space-x-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleBookmark}
+                  className={`hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all ${
+                    bookmarks.includes(currentPage)
+                      ? "text-yellow-500 bg-yellow-50 dark:bg-yellow-900/20"
+                      : ""
+                  }`}
+                  title="Bookmark this page"
+                >
+                  <Bookmark className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setAiPanelOpen(!aiPanelOpen)}
+                  className={`hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-all ${
+                    aiPanelOpen
+                      ? "bg-blue-50 dark:bg-blue-900/20 text-blue-600"
+                      : ""
+                  }`}
+                  title="AI Assistant"
+                >
+                  <BookText className="h-5 w-5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleFullScreen}
+                  className="hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"
+                  title="Fullscreen"
+                >
+                  <Maximize className="h-5 w-5" />
+                </Button>
+              </div>
+            </div>
+            {/* Progress Bar */}
+            <div className="h-1 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500">
+              <div
+                className="h-full bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 transition-all duration-300"
+                style={{ width: `${bookProgress}%` }}
+              />
             </div>
           </div>
         )}
@@ -827,8 +999,8 @@ export default function ReaderClient({
         <div
           ref={mainContentRef}
           className={`flex-1 flex flex-col items-center ${
-            isFullScreen ? "p-0" : "py-6 sm:py-10"
-          } ${!isFullScreen ? "pb-20 md:pb-24" : ""}`}
+            (isFullScreen || isDistractionFree) ? "p-0" : "py-6 sm:py-8"
+          } ${(!isFullScreen && !isDistractionFree) ? "pb-32 md:pb-20" : ""}`}
         >
           <div
             className={`w-full max-w-3xl mx-auto ${
@@ -836,86 +1008,145 @@ export default function ReaderClient({
             } ${getMarginClass()}`}
           >
             {showDirectionModal && (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60">
-                <div className="bg-white dark:bg-gray-800 rounded-lg p-8 max-w-xs w-full text-center shadow-lg">
-                  <h2 className="text-lg font-bold mb-2">Setting for the first time...</h2>
-                  <p className="mb-4 text-sm text-muted-foreground">
-                    Select the reading mode you want. You can re-config in <b>Settings &gt; Reading Mode</b>
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+              >
+                <div className="bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-800 rounded-2xl p-8 max-w-sm w-full mx-4 text-center shadow-2xl border border-slate-200 dark:border-slate-700">
+                  <h2 className="text-xl font-bold mb-2 text-slate-900 dark:text-white">
+                    Choose Your Reading Style
+                  </h2>
+                  <p className="mb-6 text-sm text-slate-600 dark:text-slate-400">
+                    Select how you'd like to read. You can change this anytime in settings.
                   </p>
                   <div className="space-y-3">
                     <Button
-                      className="w-full flex items-center justify-center"
+                      className="w-full flex items-center justify-center bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 shadow-lg"
                       onClick={() => {
                         setReadingDirection("vertical");
                         localStorage.setItem("reader-direction", "vertical");
                         setShowDirectionModal(false);
                       }}
                     >
-                      <span className="mr-2">📖</span> Vertical Follow
+                      <span className="mr-2 text-lg">↓</span> Continuous Scroll
                     </Button>
                     <Button
-                      className="w-full flex items-center justify-center"
+                      variant="outline"
+                      className="w-full flex items-center justify-center border-slate-300 dark:border-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800"
                       onClick={() => {
                         setReadingDirection("horizontal");
                         localStorage.setItem("reader-direction", "horizontal");
                         setShowDirectionModal(false);
                       }}
                     >
-                      <span className="mr-2">📚</span> Horizontal Follow
+                      <span className="mr-2 text-lg">→</span> Page by Page
                     </Button>
                   </div>
                 </div>
-              </div>
+              </motion.div>
             )}
-            {readingDirection === "vertical" ? (
+            {bookFormat === "epub" && downloadUrl ? (
+              <div className="flex-1 h-[calc(100vh-120px)] w-full max-w-5xl mx-auto rounded-xl overflow-hidden shadow-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <EpubViewer 
+                  url={downloadUrl} 
+                  theme={readingMode === "dark" || readingMode === "oled" ? "dark" : "light"}
+                  fontSize={fontSize}
+                  fontFamily={fontFamily}
+                />
+              </div>
+            ) : bookFormat === "pdf" && downloadUrl ? (
+              <div className="flex-1 h-[calc(100vh-120px)] w-full max-w-5xl mx-auto rounded-xl overflow-hidden shadow-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <PdfViewer 
+                  url={downloadUrl} 
+                  theme={readingMode === "dark" || readingMode === "oled" ? "dark" : "light"}
+                />
+              </div>
+            ) : readingDirection === "vertical" ? (
               <>
                 <div
-                  className={`prose dark:prose-invert prose-neutral py-6 sm:py-8 ${getFontFamilyClass()}`}
-                  style={{ fontSize: `clamp(14px, 4vw, ${fontSize}px)`, lineHeight }}
+                  className={`${getFontFamilyClass()} py-6 sm:py-8 space-y-8`}
+                  style={{ fontSize: `clamp(15px, 5vw, ${fontSize}px)`, lineHeight: `${lineHeight * 1.2}` }}
                 >
                   {contentPages.slice(0, loadedPageCount).map((page, idx) => (
-                    <div key={idx} className="reader-page mb-12 pb-8 border-b border-gray-200 dark:border-gray-700 relative">
-                      {page.split(/\n\s*\n/).map((paragraph, pIndex) =>
-                        paragraph.trim() ? (
-                          <p key={pIndex} className="mb-4">
-                            {paragraph.split(/\s+/).map((word, wIndex) => (
-                              <span
-                                key={wIndex}
-                                className={`word cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 ${currentWordIndex === wIndex ? "bg-yellow-200" : ""}`}
-                                onClick={e => {
-                                  if (e.altKey) {
-                                    handleWordTTS(wIndex);
-                                  } else {
-                                    if (isPlaying) pauseTextToSpeech();
-                                    getWordDefinition(word, e);
-                                  }
-                                }}
-                                title="Click for definition. Alt+Click (desktop) or long-press (mobile) for TTS."
-                                onTouchStart={() => handleWordTouchStart(wIndex)}
-                                onTouchEnd={handleWordTouchEnd}
-                                onTouchMove={handleWordTouchEnd}
-                                onTouchCancel={handleWordTouchEnd}
-                              >
-                                {word}{" "}
-                              </span>
-                            ))}
-                          </p>
-                        ) : null
-                      )}
-                      <div className="absolute right-4 bottom-2 text-xs text-muted-foreground select-none opacity-60">
+                    <motion.div
+                      key={idx}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      className="reader-page bg-gradient-to-br from-white/60 to-slate-50/60 dark:from-slate-800/60 dark:to-slate-900/60 rounded-xl p-6 sm:p-8 border border-slate-200/50 dark:border-slate-700/50 backdrop-blur-sm hover:shadow-lg transition-shadow duration-300 relative group"
+                    >
+                      <div className="space-y-4 text-slate-800 dark:text-slate-100 text-justify leading-relaxed">
+                        {page.split(/\n\s*\n/).map((paragraph, pIndex) =>
+                          paragraph.trim() ? (
+                            <p key={pIndex} className="transition-all duration-300">
+                              {paragraph.split(/\s+/).map((word, wIndex) => (
+                                <span
+                                  key={wIndex}
+                                  className={`inline word cursor-pointer relative transition-all duration-150 px-0.5 rounded
+                                    ${
+                                      currentWordIndex === wIndex
+                                        ? "bg-gradient-to-r from-yellow-200 to-yellow-100 dark:from-yellow-600 dark:to-yellow-700 text-slate-900 dark:text-slate-100 font-semibold shadow-md"
+                                        : "hover:bg-slate-200 dark:hover:bg-slate-700 hover:shadow-sm"
+                                    }
+                                  `}
+                                  onClick={e => {
+                                    if (e.altKey) {
+                                      handleWordTTS(wIndex);
+                                    } else {
+                                      if (isPlaying) pauseTextToSpeech();
+                                      getWordDefinition(word, e);
+                                    }
+                                  }}
+                                  title="Click for definition. Alt+Click (desktop) or long-press (mobile) for TTS."
+                                  onTouchStart={() => handleWordTouchStart(wIndex)}
+                                  onTouchEnd={handleWordTouchEnd}
+                                  onTouchMove={handleWordTouchEnd}
+                                  onTouchCancel={handleWordTouchEnd}
+                                >
+                                  {word}{" "}
+                                </span>
+                              ))}
+                            </p>
+                          ) : null
+                        )}
+                      </div>
+                      <div className="absolute right-4 bottom-4 text-xs font-semibold text-slate-500 dark:text-slate-500 select-none opacity-60 group-hover:opacity-100 transition-opacity">
                         Page {idx + 1}
                       </div>
-                    </div>
+                    </motion.div>
                   ))}
                   {loadedPageCount === contentPages.length && (
+                    <motion.div
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      className="text-center py-16"
+                    >
+                      <div className="inline-block">
+                        <div className="text-5xl mb-4">🎉</div>
+                        <div className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+                          Book Finished!
+                        </div>
+                        <p className="text-slate-600 dark:text-slate-400 mb-6">
+                          Great job reading this wonderful book.
+                        </p>
+                        <Button
+                          onClick={() => router.push("/discover")}
+                          className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700"
+                        >
+                          Discover More Books
+                        </Button>
+                      </div>
+                    </motion.div>
+                  )}
+                  {currentPage === contentPages.length - 1 && (
                     <div className="text-center py-12">
-                      <div className="text-lg font-semibold text-primary mb-2">Book finished 🎉</div>
                       <p className="text-sm text-muted-foreground">You've reached the end of the book</p>
                     </div>
                   )}
                 </div>
                 {!isFullScreen && (
-                  <div className="hidden md:flex fixed bottom-0 left-0 w-full z-40 bg-background/95 backdrop-blur border-t border-border py-4 px-8 items-center justify-between gap-4" style={{ minHeight: 64 }}>
+                  <div className="hidden md:flex fixed bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-background via-background/95 to-background/80 backdrop-blur-md border-t border-border py-3 px-8 items-center justify-between gap-4 shadow-lg" style={{ minHeight: 64 }}>
                     <Button
                       variant="outline"
                       size="sm"
@@ -975,6 +1206,7 @@ export default function ReaderClient({
                   pauseTextToSpeech={pauseTextToSpeech}
                   handleWordTouchStart={handleWordTouchStart}
                   handleWordTouchEnd={handleWordTouchEnd}
+                  isDistractionFree={isDistractionFree}
                 />
                 {currentPage === contentPages.length - 1 && (
                   <div className="text-center text-lg font-semibold text-primary mt-12 mb-24">Book finished 🎉</div>
@@ -984,247 +1216,255 @@ export default function ReaderClient({
           </div>
         </div>
 
-        {/* Bookmarks Panel */}
+        {/* Bookmarks Panel - Enhanced */}
         <AnimatePresence>
           {isFullScreen && bookmarks.length > 0 && controlsVisible && (
             <motion.div
-              initial={{ opacity: 0, x: -100 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -100 }}
+              initial={{ opacity: 0, x: -100, scale: 0.95 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: -100, scale: 0.95 }}
               transition={{ duration: 0.3 }}
-              className="fixed left-6 top-1/2 transform -translate-y-1/2 bg-white dark:bg-gray-800 shadow-md rounded-md p-2 max-h-80 overflow-y-auto"
+              className="fixed left-4 top-20 max-h-96 sm:left-6 sm:top-24 bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-800 shadow-xl dark:shadow-2xl rounded-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-700 backdrop-blur-sm"
             >
-              <h3 className="text-sm font-medium px-2 py-1">Bookmarks</h3>
-              <Separator className="my-1" />
-              <div className="space-y-1">
+              <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-yellow-500/10 via-amber-500/10 to-transparent">
+                <div className="flex items-center gap-2">
+                  <div className="p-2 bg-gradient-to-br from-yellow-400 to-amber-500 rounded-lg">
+                    <Bookmark className="h-4 w-4 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      Bookmarks
+                    </h3>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      {bookmarks.length} saved
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-y-auto flex-1 px-2 py-3 space-y-2 max-h-80">
                 {bookmarks.map((bookmark) => (
-                  <Button
+                  <motion.div
                     key={bookmark}
-                    variant="ghost"
-                    size="sm"
-                    className={`w-full justify-start ${
-                      currentPage === bookmark ? "bg-primary/10 text-primary" : ""
-                    }`}
-                    onClick={() => setCurrentPage(bookmark)}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    whileHover={{ x: 4 }}
                   >
-                    <Bookmark className="h-4 w-4 mr-2" />
-                    Page {bookmark + 1}
-                  </Button>
+                    <Button
+                      variant="ghost"
+                      className={`w-full justify-start px-3 py-2 rounded-lg transition-all ${
+                        currentPage === bookmark
+                          ? "bg-gradient-to-r from-yellow-100 to-amber-100 dark:from-yellow-900/40 dark:to-amber-900/40 text-yellow-700 dark:text-yellow-300 border border-yellow-200 dark:border-yellow-700/50 shadow-md"
+                          : "hover:bg-slate-100 dark:hover:bg-slate-800"
+                      }`}
+                      onClick={() => setCurrentPage(bookmark)}
+                    >
+                      <Bookmark className="h-4 w-4 mr-2 flex-shrink-0" />
+                      <span className="text-sm truncate">Page {bookmark + 1}</span>
+                    </Button>
+                  </motion.div>
                 ))}
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* AI Assistant Panel */}
+        {/* AI Assistant Panel - Enhanced Design */}
         <AnimatePresence>
-          {(isFullScreen ? controlsVisible : true) && aiPanelOpen && (
+          {(isFullScreen ? controlsVisible : true) && aiPanelOpen && !isDistractionFree && (
             <motion.div
-              initial={{ opacity: 0, x: 100 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: 100 }}
+              initial={{ opacity: 0, x: 100, scale: 0.95 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 100, scale: 0.95 }}
               transition={{ duration: 0.3 }}
-              className="fixed right-6 top-16 bottom-16 w-96 bg-white dark:bg-gray-800 shadow-lg rounded-lg overflow-hidden flex flex-col
-                sm:right-6 sm:top-16 sm:bottom-16 sm:w-96
-                max-sm:right-0 max-sm:left-0 max-sm:top-0 max-sm:bottom-0 max-sm:w-[95vw] max-sm:max-w-sm max-sm:mx-auto max-sm:rounded-b-none max-sm:rounded-t-none max-sm:h-[90vh]"
+              className="fixed right-4 top-20 sm:right-6 sm:top-24 bottom-6 w-96 max-w-[95vw] max-sm:w-[90vw] max-sm:left-4 max-sm:right-4 max-sm:max-w-none bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-800 shadow-2xl dark:shadow-2xl rounded-2xl overflow-hidden flex flex-col border border-slate-200 dark:border-slate-700"
             >
-              <div className="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-gradient-to-r from-primary/5 to-transparent">
+              <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-gradient-to-r from-blue-500/10 via-purple-500/10 to-transparent">
                 <div className="flex items-center gap-2">
-                  <MessageSquare className="h-5 w-5 text-primary" />
-                  <h3 className="text-sm font-semibold">AI Reading Assistant</h3>
+                  <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg">
+                    <MessageSquare className="h-4 w-4 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                      AI Reading Assistant
+                    </h3>
+                    <p className="text-xs text-slate-600 dark:text-slate-400">
+                      Page {readingDirection === "vertical" ? verticalPage : currentPage + 1}
+                    </p>
+                  </div>
                 </div>
                 <Button
                   variant="ghost"
                   size="sm"
                   onClick={() => setAiPanelOpen(false)}
-                  className="hover:bg-gray-100 dark:hover:bg-gray-700 touch-manipulation"
+                  className="hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
                   aria-label="Close AI Assistant"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-5 w-5" />
                 </Button>
               </div>
               <Tabs defaultValue="summary" className="flex-1 overflow-hidden flex flex-col">
-                <TabsList className="w-full justify-start px-4 py-2 bg-muted/50">
-                  <TabsTrigger value="summary" className="flex-1 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                <TabsList className="w-full justify-start px-4 py-3 bg-slate-100 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-700">
+                  <TabsTrigger
+                    value="summary"
+                    className="flex-1 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:shadow-md data-[state=active]:text-blue-600 rounded-lg transition-all"
+                  >
                     <BookText className="h-4 w-4 mr-2" />
                     Summary
                   </TabsTrigger>
-                  <TabsTrigger value="ask" className="flex-1 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <TabsTrigger
+                    value="ask"
+                    className="flex-1 data-[state=active]:bg-white dark:data-[state=active]:bg-slate-900 data-[state=active]:shadow-md data-[state=active]:text-purple-600 rounded-lg transition-all"
+                  >
                     <MessageSquare className="h-4 w-4 mr-2" />
                     Ask AI
                   </TabsTrigger>
                 </TabsList>
-                <TabsContent value="summary" className="flex-1 flex flex-col h-full p-0">
-                  <div className="bg-muted/30 rounded-lg px-4 pt-4 pb-2 shrink-0">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="text-sm font-medium">Page Summary</p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          Get an AI-generated summary of the current page
-                        </p>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        Page {readingDirection === "vertical" ? verticalPage : currentPage + 1} of {contentPages.length}
-                      </div>
+                <TabsContent value="summary" className="flex-1 flex flex-col h-full p-0 overflow-hidden">
+                  <div className="px-4 pt-3 pb-2 shrink-0 bg-gradient-to-r from-blue-50 to-slate-50 dark:from-blue-900/20 dark:to-slate-900/20">
+                    <div className="space-y-2">
+                      <h4 className="font-semibold text-slate-900 dark:text-white text-sm">
+                        Current Page Summary
+                      </h4>
+                      <p className="text-xs text-slate-600 dark:text-slate-400">
+                        Get an AI-generated summary of the current page to enhance your understanding
+                      </p>
                     </div>
                   </div>
-                  {/* Compact Book Info Row */}
-                  <div className="px-4 pt-2 pb-0 shrink-0">
-                    <div className="flex flex-wrap gap-x-3 gap-y-1 items-center text-xs text-muted-foreground truncate">
-                      <span title={book.title}><b>Title:</b> {book.title}</span>
-                      {book.authors && book.authors.length > 0 && <span title={book.authors[0]}><b>Author:</b> {book.authors[0]}</span>}
-                      {book.publishedDate && <span><b>Year:</b> {book.publishedDate}</span>}
-                      {book.categories && book.categories.length > 0 && (
-                        <span
-                          className="max-w-[120px] truncate"
-                          title={book.categories.join(', ')}
-                        >
-                          <b>Genre:</b> {book.categories.join(', ')}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  {/* Main scrollable summary area */}
-                  <div className="flex-1 overflow-y-auto px-4 pt-2 pb-2 space-y-2">
+                  <div className="flex-1 overflow-y-auto px-4 pt-3 pb-2 space-y-3">
                     {summaryLoading ? (
-                      <div className="flex flex-col items-center justify-center py-6 space-y-2">
+                      <div className="flex flex-col items-center justify-center py-8 space-y-3">
                         <div className="relative">
-                          <div className="animate-spin rounded-full h-8 w-8 border-4 border-primary/20 border-t-primary"></div>
-                          <MessageSquare className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 h-4 w-4 text-primary" />
+                          <div className="animate-spin rounded-full h-10 w-10 border-4 border-slate-200 dark:border-slate-700 border-t-blue-500"></div>
                         </div>
-                        <p className="text-sm text-muted-foreground">Generating summary...</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">
+                          Generating summary...
+                        </p>
                       </div>
                     ) : summary ? (
                       <>
-                        <div className="prose prose-sm dark:prose-invert max-w-none bg-muted/30 rounded-lg p-3 mt-0">
-                          <p className="text-sm mb-1">{summary}</p>
+                        <div className="bg-gradient-to-br from-blue-50 to-slate-50 dark:from-blue-900/30 dark:to-slate-900/30 rounded-xl p-4 border border-blue-200 dark:border-blue-900/50">
+                          <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-100">
+                            {summary}
+                          </p>
                         </div>
-                        <div className="flex items-center justify-between text-xs text-muted-foreground mt-1">
-                          <div className="flex items-center gap-2">
-                            <BookText className="h-4 w-4" />
-                            <span>AI-generated summary</span>
-                          </div>
+                        <div className="flex gap-2 pt-2">
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             size="sm"
                             onClick={() => {
                               navigator.clipboard.writeText(summary);
                               toast({
-                                title: "Copied",
+                                title: "Copied!",
                                 description: "Summary copied to clipboard",
                                 duration: 1500,
                               });
                             }}
+                            className="flex-1 border-slate-300 dark:border-slate-600"
                           >
                             <Copy className="h-4 w-4 mr-1" /> Copy
                           </Button>
                         </div>
-                        {/* Key Themes */}
-                        {book.themes && book.themes.length > 0 && (
-                          <div className="mt-2 bg-muted/20 rounded-md p-2 text-xs">
-                            <b>Themes:</b> {
-
-book.themes.join(', ')}
-                          </div>
-                        )}
                       </>
                     ) : (
-                      <div className="flex flex-col items-start gap-2 mt-2">
-                        <MessageSquare className="h-8 w-8 text-muted-foreground opacity-50 mb-1" />
-                        <p className="text-sm text-muted-foreground">Click the button below to generate a summary</p>
+                      <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <div className="p-3 bg-slate-100 dark:bg-slate-800 rounded-lg mb-3">
+                          <BookText className="h-6 w-6 text-slate-400" />
+                        </div>
+                        <p className="text-sm text-slate-600 dark:text-slate-400">
+                          Click the button below to generate a summary
+                        </p>
                       </div>
                     )}
                   </div>
-                  {/* Action buttons and tip pinned to bottom */}
-                  <div className="px-4 pb-4 pt-2 mt-1 shrink-0">
-                    <div className="space-y-2">
-                      <Button 
-                        onClick={handleGenerateSummary} 
-                        className="w-full transition-all duration-200 hover:bg-primary/90"
-                        disabled={summaryLoading}
-                      >
-                        {summary ? "Generate New Summary" : "Generate Summary"}
-                      </Button>
-                      {summary && (
-                        <Button
-                          variant="outline"
-                          onClick={() => setSummary("")}
-                          className="w-full"
-                        >
-                          Clear Summary
-                        </Button>
-                      )}
-                      <div className="bg-muted/10 rounded-md p-2 text-xs text-muted-foreground">
-                        <b>Tip:</b> You can ask the AI about characters, themes, or events in the "Ask AI" tab!
-                      </div>
-                    </div>
+                  <div className="px-4 pb-4 pt-2 shrink-0 border-t border-slate-200 dark:border-slate-700">
+                    <Button
+                      onClick={handleGenerateSummary}
+                      disabled={summaryLoading}
+                      className="w-full bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-medium shadow-lg"
+                    >
+                      {summary ? "Generate New Summary" : "Generate Summary"}
+                    </Button>
                   </div>
                 </TabsContent>
-                <TabsContent value="ask" className="flex-1 overflow-hidden flex flex-col">
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                    <div className="bg-muted/30 rounded-lg p-3">
-                      <p className="text-sm text-muted-foreground">
-                        Ask a question about the current page (e.g., "What are the main themes?")
-                      </p>
-                    </div>
-                    <Textarea
-                      placeholder="e.g. What are the main themes presented? Who is the protagonist?"
-                      value={question}
-                      onChange={(e) => setQuestion(e.target.value.slice(0, 200))}
-                      className="min-h-24 resize-none border-gray-300 dark:border-gray-600 focus:border-primary focus:ring-primary transition-all duration-200"
-                    />
-                    <div className="flex justify-between items-center text-xs text-muted-foreground">
-                      <p>Try asking: What are the main themes? Who is the main character?</p>
-                      <p>{question.length}/200</p>
-                    </div>
+                <TabsContent value="ask" className="flex-1 overflow-hidden flex flex-col p-0">
+                  <div className="flex-1 overflow-y-auto px-4 pt-3 pb-2 space-y-3">
                     {answerLoading ? (
                       <div className="flex flex-col items-center justify-center py-8 space-y-3">
                         <div className="relative">
-                          <div className="animate-spin rounded-full h-10 w-10 border-4 border-primary/20 border-t-primary"></div>
-                          <MessageSquare className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 h-5 w-5 text-primary" />
+                          <div className="animate-spin rounded-full h-10 w-10 border-4 border-slate-200 dark:border-slate-700 border-t-purple-500"></div>
                         </div>
-                        <p className="text-sm text-muted-foreground">Thinking...</p>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 font-medium">
+                          Thinking...
+                        </p>
                       </div>
                     ) : answer ? (
-                      <div className="prose prose-sm dark:prose-invert max-w-none bg-muted/30 rounded-lg p-3">
-                        <p className="text-sm">{answer}</p>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center py-8 space-y-3">
-                        <MessageSquare className="h-12 w-12 text-muted-foreground opacity-50" />
-                        <p className="text-sm text-muted-foreground text-center">Ask a question to get an answer</p>
-                      </div>
-                    )}
-                    {aiHistory.length > 0 && (
-                      <div className="mt-4 space-y-2">
-                        <h4 className="text-sm font-medium">Recent Questions</h4>
-                        <div className="space-y-2 max-h-40 overflow-y-auto">
-                          {aiHistory.map((item, index) => (
-                            <div key={index} className="bg-muted/30 rounded-lg p-3 space-y-1">
-                              <p className="text-sm font-medium">Q: {item.question}</p>
-                              <p className="text-sm text-muted-foreground">A: {item.answer}</p>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setQuestion(item.question)}
-                                className="w-full mt-2"
-                              >
-                                Re-ask
-                              </Button>
-                            </div>
-                          ))}
+                      <div className="space-y-3">
+                        <div className="bg-gradient-to-br from-purple-50 to-slate-50 dark:from-purple-900/30 dark:to-slate-900/30 rounded-xl p-4 border border-purple-200 dark:border-purple-900/50">
+                          <p className="text-xs font-semibold text-slate-600 dark:text-slate-400 mb-2">
+                            AI Response:
+                          </p>
+                          <p className="text-sm leading-relaxed text-slate-800 dark:text-slate-100">
+                            {answer}
+                          </p>
                         </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(answer);
+                            toast({
+                              title: "Copied!",
+                              description: "Answer copied to clipboard",
+                              duration: 1500,
+                            });
+                          }}
+                          className="w-full border-slate-300 dark:border-slate-600"
+                        >
+                          <Copy className="h-4 w-4 mr-1" /> Copy Answer
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+                  <div className="px-4 pt-2 pb-2 shrink-0 space-y-3 border-t border-slate-200 dark:border-slate-700">
+                    <Textarea
+                      placeholder="Ask about characters, themes, events..."
+                      value={question}
+                      onChange={(e) => setQuestion(e.target.value)}
+                      className="min-h-24 resize-none border-slate-300 dark:border-slate-600 focus:ring-2 focus:ring-purple-500/50"
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleAskQuestion}
+                        disabled={answerLoading || !question.trim()}
+                        className="flex-1 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white font-medium shadow-lg"
+                      >
+                        Ask Question
+                      </Button>
+                      <Button
+                        onClick={handleDictation}
+                        disabled={!dictationSupported}
+                        variant={isDictating ? "destructive" : "outline"}
+                        size="icon"
+                        className="h-10 w-10 rounded-lg"
+                        title={dictationSupported ? "Use voice input" : "Speech Recognition not supported"}
+                      >
+                        {isDictating ? (
+                          <MicOff className="h-4 w-4 animate-pulse" />
+                        ) : (
+                          <Mic className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                    {dictationError && (
+                      <div className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded-md">
+                        {dictationError}
                       </div>
                     )}
-                  </div>
-                  <div className="p-4 border-t dark:border-gray-700">
-                    <Button
-                      onClick={handleAskQuestion}
-                      disabled={answerLoading || !question.trim()}
-                      className="w-full transition-all duration-200 hover:bg-primary/90"
-                    >
-                      Ask Question
-                    </Button>
+                    {!dictationSupported && (
+                      <div className="text-xs text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/50 p-2 rounded-md">
+                        💡 Tip: Speech Recognition not available in your browser. Update to latest Chrome, Edge, or Safari.
+                      </div>
+                    )}
                   </div>
                 </TabsContent>
               </Tabs>
@@ -1255,7 +1495,7 @@ book.themes.join(', ')}
         </AnimatePresence>
 
         {/* Floating FAB (Quick Actions) */}
-        {showFloatingButtons && !isFullScreen && (
+        {showFloatingButtons && !isFullScreen && !isDistractionFree && (
           <Popover open={fabOpen} onOpenChange={setFabOpen}>
             <PopoverTrigger asChild>
               <Button
@@ -1310,17 +1550,18 @@ book.themes.join(', ')}
         )}
 
         {/* Settings Sheet */}
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              className="fixed bottom-6 right-6 shadow-md z-50"
-              title="Reading settings"
-            >
-              <Settings className="h-5 w-5" />
-            </Button>
-          </SheetTrigger>
+        {!isDistractionFree && (
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="fixed bottom-6 right-6 shadow-md z-50"
+                title="Reading settings"
+              >
+                <Settings className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
           <SheetContent>
             <SheetHeader>
               <SheetTitle>Reading Settings</SheetTitle>
@@ -1497,19 +1738,21 @@ book.themes.join(', ')}
             </SheetFooter>
           </SheetContent>
         </Sheet>
+        )}
 
         {/* TTS Sheet */}
-        <Sheet>
-          <SheetTrigger asChild>
-            <Button
-              variant="outline"
-              size="icon"
-              className="fixed bottom-20 right-6 shadow-md z-50"
-              title="Text-to-speech controls"
-            >
-              <Headphones className="h-5 w-5" />
-            </Button>
-          </SheetTrigger>
+        {!isDistractionFree && (
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button
+                variant="outline"
+                size="icon"
+                className="fixed bottom-20 right-6 shadow-md z-50"
+                title="Text-to-speech controls"
+              >
+                <Headphones className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
           <SheetContent>
             <SheetHeader>
               <SheetTitle>Text-to-Speech</SheetTitle>
@@ -1584,9 +1827,11 @@ book.themes.join(', ')}
             </SheetFooter>
           </SheetContent>
         </Sheet>
+        )}
 
         {/* Side Navigation Zones */}
-        <>
+        {!isDistractionFree && (
+          <>
           <div
             className={`hidden md:block fixed left-0 z-30 cursor-pointer group ${isFullScreen ? "opacity-90" : ""}`}
             style={{ top: "40%", height: "20%", width: "48px", background: "linear-gradient(to right, rgba(0,0,0,0.08), transparent)", borderRadius: "0 16px 16px 0" }}
@@ -1611,10 +1856,11 @@ book.themes.join(', ')}
               <ChevronRight className={`text-muted-foreground ${isFullScreen ? "h-12 w-12" : "h-8 w-8"}`} />
             </div>
           </div>
-        </>
+          </>
+        )}
 
         {/* Fixed Jump to Page Button (only in horizontal mode) */}
-        {readingDirection === "horizontal" && (
+        {readingDirection === "horizontal" && !isDistractionFree && (
           <Button
             variant="outline"
             size="lg"
@@ -1629,7 +1875,7 @@ book.themes.join(', ')}
           </Button>
         )}
         {/* Floating Jump to Page Button (only in vertical mode) */}
-        {readingDirection === "vertical" && showFloatingButtons && !isFullScreen && (
+        {readingDirection === "vertical" && showFloatingButtons && !isFullScreen && !isDistractionFree && (
           <Button
             variant="outline"
             size="lg"
@@ -1681,6 +1927,20 @@ book.themes.join(', ')}
             </div>
           </div>
         )}
+        {/* Reader Toolbar Component */}
+        <ReaderToolbar
+          visible={controlsVisible && !isDistractionFree}
+          fontSize={fontSize}
+          setFontSizeAction={setFontSize}
+          lineHeight={lineHeight}
+          setLineHeightAction={setLineHeight}
+          fontFamily={fontFamily}
+          setFontFamilyAction={setFontFamily}
+          theme={readingMode}
+          setThemeAction={setReadingMode}
+          marginSize={marginSize}
+          setMarginSizeAction={setMarginSize}
+        />
       </div>
     </motion.div>
   );
@@ -1701,6 +1961,7 @@ interface HorizontalSwipePageProps {
   pauseTextToSpeech: () => void;
   handleWordTouchStart: (wIndex: number) => void;
   handleWordTouchEnd: () => void;
+  isDistractionFree: boolean;
 }
 
 function HorizontalSwipePage(props: HorizontalSwipePageProps) {
@@ -1719,6 +1980,7 @@ function HorizontalSwipePage(props: HorizontalSwipePageProps) {
     pauseTextToSpeech,
     handleWordTouchStart,
     handleWordTouchEnd,
+    isDistractionFree,
   } = props;
   const touchStartX = useRef(0);
 
@@ -1737,42 +1999,70 @@ function HorizontalSwipePage(props: HorizontalSwipePageProps) {
 
   return (
     <motion.div
-      className="bg-white dark:bg-gray-900 rounded-lg shadow-md"
+      initial={{ scale: 0.98, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      exit={{ scale: 0.98, opacity: 0 }}
+      transition={{ duration: 0.3 }}
+      className="bg-gradient-to-br from-white/90 to-slate-50/90 dark:from-slate-900/90 dark:to-slate-800/90 rounded-2xl shadow-lg dark:shadow-2xl border border-slate-200 dark:border-slate-700/50 backdrop-blur-sm"
       style={{ touchAction: "pan-y" }}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
       <div
         ref={contentRef}
-        className={`py-6 sm:py-8 ${getFontFamilyClass()} prose dark:prose-invert prose-neutral`}
-        style={{ fontSize: `clamp(14px, 4vw, ${fontSize}px)`, lineHeight }}
+        className={`p-8 sm:p-12 md:p-16 ${getFontFamilyClass()} min-h-[70vh] flex flex-col justify-center`}
+        style={{ fontSize: `clamp(15px, 5vw, ${fontSize}px)`, lineHeight: `${lineHeight}em` }}
       >
-        {contentPages[currentPage]?.split("\n\n").map((paragraph, pIndex) => (
-          <p key={pIndex} className="mb-4">
-            {paragraph.split(/\s+/).map((word, wIndex) => (
-              <span
-                key={wIndex}
-                className={`word cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-200 ${currentWordIndex === wIndex ? "bg-yellow-200" : ""}`}
-                onClick={e => {
-                  if (e.altKey) {
-                    handleWordTTS(wIndex);
-                  } else {
-                    if (isPlaying) pauseTextToSpeech();
-                    getWordDefinition(word, e);
-                  }
-                }}
-                title="Click for definition. Alt+Click (desktop) or long-press (mobile) for TTS."
-                onTouchStart={() => handleWordTouchStart(wIndex)}
-                onTouchEnd={handleWordTouchEnd}
-                onTouchMove={handleWordTouchEnd}
-                onTouchCancel={handleWordTouchEnd}
-              >
-                {word}{" "}
-              </span>
-            ))}
-          </p>
-        ))}
+        <div className="space-y-6 text-slate-800 dark:text-slate-100">
+          {contentPages[currentPage]?.split("\n\n").map((paragraph, pIndex) => (
+            <p
+              key={pIndex}
+              className="text-justify leading-relaxed transition-all duration-300 hover:shadow-lg hover:px-4 hover:py-2 rounded-lg dark:hover:bg-slate-700/30 cursor-pointer"
+            >
+              {paragraph.split(/\s+/).map((word, wIndex) => (
+                <span
+                  key={wIndex}
+                  className={`inline word cursor-pointer relative transition-all duration-150 px-0.5 rounded 
+                    ${
+                      currentWordIndex === wIndex
+                        ? "bg-gradient-to-r from-yellow-200 to-yellow-100 dark:from-yellow-600 dark:to-yellow-700 text-slate-900 font-semibold shadow-md"
+                        : "hover:bg-slate-200 dark:hover:bg-slate-700 hover:shadow-sm"
+                    }
+                  `}
+                  onClick={(e) => {
+                    if (e.altKey) {
+                      handleWordTTS(wIndex);
+                    } else {
+                      if (isPlaying) pauseTextToSpeech();
+                      getWordDefinition(word, e);
+                    }
+                  }}
+                  title="Click for definition. Alt+Click (desktop) or long-press (mobile) for TTS."
+                  onTouchStart={() => handleWordTouchStart(wIndex)}
+                  onTouchEnd={handleWordTouchEnd}
+                  onTouchMove={handleWordTouchEnd}
+                  onTouchCancel={handleWordTouchEnd}
+                >
+                  {word}{" "}
+                </span>
+              ))}
+            </p>
+          ))}
+        </div>
       </div>
+
+      {/* Page Navigation Indicators */}
+      {!isDistractionFree && (
+        <div className="px-8 sm:px-12 md:px-16 py-6 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between bg-gradient-to-r from-slate-50 to-transparent dark:from-slate-800/50 dark:to-transparent rounded-b-2xl">
+        <div className="text-sm text-slate-600 dark:text-slate-400 font-medium">
+          Page <span className="font-bold text-slate-900 dark:text-slate-100">{currentPage + 1}</span> of{" "}
+          <span className="font-bold text-slate-900 dark:text-slate-100">{contentPages.length}</span>
+        </div>
+        <div className="text-xs text-slate-500 dark:text-slate-500">
+          Swipe ← → to navigate
+        </div>
+        </div>
+      )}
     </motion.div>
   );
 }

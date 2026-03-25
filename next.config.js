@@ -18,7 +18,8 @@ const nextConfig = {
     ],
   },
   experimental: {
-    optimizeCss: true,
+    // Disabled for deployment stability: optimizeCss may require critters at build time.
+    optimizeCss: false,
   },
   swcMinify: true,
   compress: true,

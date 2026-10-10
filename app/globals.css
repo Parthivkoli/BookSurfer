@@ -3,6 +3,122 @@
 @tailwind utilities;
 
 :root {
+  --background: 222 47% 9%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 188 94% 43%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 69%;
+  --accent: 210 40% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 188 94% 43%;
+  --radius: 1rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at top, rgba(34, 211, 238, 0.08), transparent 25%),
+      linear-gradient(180deg, #020617 0%, #0f172a 100%);
+  }
+
+  a {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply border border-slate-800 bg-slate-900/80 backdrop-blur-sm;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.float-slow {
+  animation: float 6s ease-in-out infinite;
+}
+
+.page-transition {
+  animation: page-turn 0.45s ease-in-out;
+}
+
+@keyframes page-turn {
+  0% { transform: translateX(0); opacity: 1; }
+  50% { transform: translateX(-8px); opacity: 0.6; }
+  51% { transform: translateX(8px); opacity: 0.6; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.7) rgba(15, 23, 42, 0.7);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.7);
+  border-radius: 999px;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
   --foreground-rgb: 0, 0, 0;
   --background-start-rgb: 214, 219, 220;
   --background-end-rgb: 255, 255, 255;
@@ -119,6 +235,355 @@
 
 .book-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 10px 25px -5px rgba(var(--primary) / 0.1), 
+  box-shadow: 0 10px 25px -5px rgba(var(--primary) / 0.1),
               0 8px 10px -6px rgba(var(--primary) / 0.1);
+}
+
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 222 47% 9%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 188 94% 43%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 69%;
+  --accent: 210 40% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 188 94% 43%;
+  --radius: 1rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at top, rgba(34, 211, 238, 0.08), transparent 25%),
+      linear-gradient(180deg, #020617 0%, #0f172a 100%);
+  }
+
+  a {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply border border-slate-800 bg-slate-900/80 backdrop-blur-sm;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.float-slow {
+  animation: float 6s ease-in-out infinite;
+}
+
+.page-transition {
+  animation: page-turn 0.45s ease-in-out;
+}
+
+@keyframes page-turn {
+  0% { transform: translateX(0); opacity: 1; }
+  50% { transform: translateX(-8px); opacity: 0.6; }
+  51% { transform: translateX(8px); opacity: 0.6; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.7) rgba(15, 23, 42, 0.7);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.7);
+  border-radius: 999px;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 222 47% 9%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 188 94% 43%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 69%;
+  --accent: 210 40% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 188 94% 43%;
+  --radius: 1rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at top, rgba(34, 211, 238, 0.08), transparent 25%),
+      linear-gradient(180deg, #020617 0%, #0f172a 100%);
+  }
+
+  a {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply border border-slate-800 bg-slate-900/80 backdrop-blur-sm;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.float-slow {
+  animation: float 6s ease-in-out infinite;
+}
+
+.page-transition {
+  animation: page-turn 0.45s ease-in-out;
+}
+
+@keyframes page-turn {
+  0% { transform: translateX(0); opacity: 1; }
+  50% { transform: translateX(-8px); opacity: 0.6; }
+  51% { transform: translateX(8px); opacity: 0.6; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.7) rgba(15, 23, 42, 0.7);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.7);
+  border-radius: 999px;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 222 47% 9%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 11%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 188 94% 43%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 69%;
+  --accent: 210 40% 96%;
+  --accent-foreground: 222 47% 11%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 188 94% 43%;
+  --radius: 1rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image:
+      radial-gradient(circle at top, rgba(34, 211, 238, 0.08), transparent 25%),
+      linear-gradient(180deg, #020617 0%, #0f172a 100%);
+  }
+
+  a {
+    @apply transition-colors duration-200;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply border border-slate-800 bg-slate-900/80 backdrop-blur-sm;
+  }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-8px); }
+}
+
+.float-slow {
+  animation: float 6s ease-in-out infinite;
+}
+
+.page-transition {
+  animation: page-turn 0.45s ease-in-out;
+}
+
+@keyframes page-turn {
+  0% { transform: translateX(0); opacity: 1; }
+  50% { transform: translateX(-8px); opacity: 0.6; }
+  51% { transform: translateX(8px); opacity: 0.6; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.7) rgba(15, 23, 42, 0.7);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.7);
+  border-radius: 999px;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button, input, select {
+  font: inherit;
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

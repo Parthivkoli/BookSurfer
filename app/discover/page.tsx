@@ -1,842 +1,526 @@
-import { Book, BookSearchParams, BookSource } from "@/types/book";
-import { load } from "cheerio";
+"use client";
 
-// API endpoints
-const API_ENDPOINTS = {
-  OPEN_LIBRARY: "https://openlibrary.org/search.json",
-  GUTENBERG: "https://gutendex.com/books",
-  GOOGLE_BOOKS: "https://www.googleapis.com/books/v1/volumes",
-  INTERNET_ARCHIVE: "https://archive.org/advancedsearch.php",
-  LIBRIVOX: "https://librivox.org/api/feed/audiobooks",
-  FEEDBOOKS: "https://www.feedbooks.com/publicdomain/catalog.atom",
-} as const;
+import { useState, useEffect } from "react";
+import { MainNav } from "@/components/main-nav";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BookOpen, Search, Filter, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { searchBooks } from "@/lib/api/books";
+import { searchArxiv } from "@/lib/api/arxiv";
+import { searchSemanticScholar } from "@/lib/api/semanticscholar";
+import { searchLNMTL } from "@/lib/api/lnmtl";
+import { searchRoyalRoad } from "@/lib/api/royalroad";
+import { scrapeWebnovel } from "@/lib/api/webnovel";
+import { Book, BookSearchParams } from "@/types/book";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 
-// Cache setup (in-memory for simplicity; consider Redis for production)
-const cache: Map<string, { data: any; timestamp: number }> = new Map();
-const CACHE_TTL = 15 * 60 * 1000;
+const BOOK_SOURCES = [
+  "openlibrary",
+  "gutenberg",
+  "google",
+  "internetarchive",
+  "librivox",
+  "feedbooks",
+] as const;
 
-const CONTENT_FILTERS = {
-  adultContentKeywords: [
-    "erotic",
-    "explicit",
-    "adult",
-    "xxx",
-    "mature content",
-    "sexual content",
-    "18+",
-    "r-rated",
-    "x-rated",
-    "pornographic",
-  ],
-  minimumRating: 1.5,
-};
+const PAPER_SOURCES = ["arxiv", "semanticscholar"] as const;
+const NOVEL_SOURCES = ["lnmtl", "royalroad", "webnovel"] as const;
 
-function normalizeText(value?: string): string {
-  return (value ?? "").trim().replace(/\s+/g, " ");
+type SourceType =
+  | (typeof BOOK_SOURCES)[number]
+  | (typeof PAPER_SOURCES)[number]
+  | (typeof NOVEL_SOURCES)[number];
+
+type ContentType = "books" | "papers" | "novels";
+
+interface ExtendedBook extends Book {
+  abstract?: string;
 }
 
-function createBookKey(book: Partial<Book>): string {
-  const title = normalizeText(book.title).toLowerCase();
-  const author = normalizeText(book.author ?? book.authors?.join(", ")).toLowerCase();
-  const source = (book.source ?? "unknown").toLowerCase();
-  return `${source}:${title}:${author}`;
+function getDefaultSources(contentType: ContentType): SourceType[] {
+  if (contentType === "books") return [...BOOK_SOURCES];
+  if (contentType === "papers") return [...PAPER_SOURCES];
+  return [...NOVEL_SOURCES];
 }
 
-function dedupeBooks(books: Book[]): Book[] {
-  const seen = new Map<string, Book>();
+export default function DiscoverPage() {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [results, setResults] = useState<ExtendedBook[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [activeTab, setActiveTab] = useState("all");
+  const [contentType, setContentType] = useState<ContentType>("books");
+  const [sources, setSources] = useState<SourceType[]>(getDefaultSources("books"));
+  const [languages, setLanguages] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState("relevance");
 
-  for (const book of books) {
-    const key = createBookKey(book);
-    const existing = seen.get(key);
+  const booksPerPage = 20;
 
-    if (!existing) {
-      seen.set(key, book);
-      continue;
-    }
+  useEffect(() => {
+    setSources((prev) => {
+      const defaults = getDefaultSources(contentType);
+      if (prev.length === 0) return defaults;
+      const kept = prev.filter((source) => defaults.includes(source as any));
+      return kept.length > 0 ? kept : defaults;
+    });
+    setCurrentPage(1);
+  }, [contentType]);
 
-    const existingRating = existing.rating ?? 0;
-    const incomingRating = book.rating ?? 0;
-    if ((incomingRating ?? 0) > (existingRating ?? 0)) {
-      seen.set(key, book);
-    }
-  }
+  useEffect(() => {
+    const fetchResults = async () => {
+      setLoading(true);
+      try {
+        let allResults: ExtendedBook[] = [];
+        let totalItems = 0;
 
-  return Array.from(seen.values());
-}
+        if (contentType === "books") {
+          const bookSources = sources.filter((s) => BOOK_SOURCES.includes(s as any)) as BookSearchParams["sources"];
+          if (bookSources.length > 0) {
+            const params: BookSearchParams = {
+              query: searchQuery,
+              page: currentPage,
+              limit: booksPerPage,
+              sources: bookSources,
+            };
 
-function applyContentFilters(books: Book[]): Book[] {
-  return books.filter((book) => {
-    const combinedText = `${book.title ?? ""} ${book.description ?? book.abstract ?? ""} ${book.categories?.join(" ") ?? ""}`.toLowerCase();
-    const hasAdultContent = CONTENT_FILTERS.adultContentKeywords.some((keyword) =>
-      combinedText.includes(keyword.toLowerCase())
-    );
+            if (activeTab !== "all") params.subject = activeTab;
+            if (languages.length > 0) params.languages = languages;
 
-    if (hasAdultContent) return false;
-
-    if (typeof book.rating === "number" && Number.isFinite(book.rating) && book.rating > 0 && book.rating < CONTENT_FILTERS.minimumRating) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
-async function fetchWithCache(url: string, cacheKey: string): Promise<any> {
-  const cached = cache.get(cacheKey);
-  const now = Date.now();
-
-  if (cached && now - cached.timestamp < CACHE_TTL) {
-    return cached.data;
-  }
-
-  const MAX_RETRIES = 3;
-  let retries = 0;
-
-  while (retries < MAX_RETRIES) {
-    try {
-      const response = await fetch(url, { cache: "no-store" });
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "No error details available");
-        if (response.status >= 500 && retries < MAX_RETRIES - 1) {
-          retries += 1;
-          await new Promise((resolve) => setTimeout(resolve, 1000 * retries));
-          continue;
-        }
-        throw new Error(`HTTP error! Status: ${response.status}, URL: ${url}, Details: ${errorText}`);
-      }
-
-      const contentType = response.headers.get("content-type") || "";
-      let data: any;
-
-      if (contentType.includes("application/json")) {
-        data = await response.json();
-      } else if (contentType.includes("application/xml") || contentType.includes("text/xml")) {
-        const text = await response.text();
-        const parser = new DOMParser();
-        const xmlDoc = parser.parseFromString(text, "text/xml");
-        data = xmlToJson(xmlDoc.documentElement);
-      } else if (contentType.includes("text/html")) {
-        data = await response.text();
-      } else {
-        data = await response.text();
-      }
-
-      cache.set(cacheKey, { data, timestamp: now });
-      return data;
-    } catch (error) {
-      if (error instanceof TypeError && error.message.includes("Failed to fetch") && retries < MAX_RETRIES - 1) {
-        retries += 1;
-        await new Promise((resolve) => setTimeout(resolve, 1000 * retries));
-        continue;
-      }
-      throw error;
-    }
-  }
-
-  throw new Error(`Unable to fetch ${url}`);
-}
-
-function xmlToJson(xml: Element): any {
-  const obj: any = {};
-
-  if (xml.attributes.length > 0) {
-    obj["@attributes"] = {};
-    for (let i = 0; i < xml.attributes.length; i++) {
-      const attribute = xml.attributes.item(i);
-      if (attribute) {
-        obj["@attributes"][attribute.nodeName] = attribute.nodeValue;
-      }
-    }
-  }
-
-  if (xml.hasChildNodes()) {
-    for (let i = 0; i < xml.childNodes.length; i++) {
-      const item = xml.childNodes.item(i);
-      if (!item) continue;
-
-      if (item.nodeType === 1) {
-        const nodeName = item.nodeName;
-        if (typeof obj[nodeName] === "undefined") {
-          obj[nodeName] = xmlToJson(item as Element);
-        } else {
-          if (typeof obj[nodeName].push === "undefined") {
-            const old = obj[nodeName];
-            obj[nodeName] = [];
-            obj[nodeName].push(old);
+            const result = await searchBooks(params);
+            allResults = result.books;
+            totalItems = result.totalItems;
           }
-          obj[nodeName].push(xmlToJson(item as Element));
+        } else if (contentType === "papers") {
+          const paperSources = sources.filter((s) => PAPER_SOURCES.includes(s as any));
+          const paperPromises = paperSources.map((source) => {
+            if (source === "arxiv") return searchArxiv(searchQuery);
+            return searchSemanticScholar(searchQuery);
+          });
+
+          const paperResults = await Promise.all(paperPromises);
+          allResults = paperResults.flat();
+          totalItems = allResults.length;
+        } else if (contentType === "novels") {
+          const novelSources = sources.filter((s) => NOVEL_SOURCES.includes(s as any));
+          const novelPromises = novelSources.map((source) => {
+            if (source === "lnmtl") return searchLNMTL(searchQuery);
+            if (source === "royalroad") return searchRoyalRoad(searchQuery);
+            return scrapeWebnovel(searchQuery);
+          });
+
+          const novelResults = await Promise.all(novelPromises);
+          allResults = novelResults.flat().map((novel) => {
+            const lightNovel = novel as { genre?: string; url?: string; chapters?: number };
+            return {
+              ...novel,
+              authors: ["Unknown Author"],
+              description: lightNovel.genre ? `Genre: ${lightNovel.genre}` : undefined,
+              coverImage: undefined,
+              publishedDate: undefined,
+              categories: lightNovel.genre ? [lightNovel.genre] : undefined,
+              language: undefined,
+              pageCount: lightNovel.chapters,
+              downloadUrl: lightNovel.url,
+              rating: undefined,
+              abstract: undefined,
+              chapters: undefined,
+            } as ExtendedBook;
+          });
+          totalItems = allResults.length;
         }
-      } else if (item.nodeType === 3) {
-        const text = item.nodeValue?.trim();
-        if (text) obj.text = text;
+
+        let sortedResults = [...allResults];
+
+        sortedResults.sort((a, b) => {
+          if (a.source === "gutenberg" && b.source !== "gutenberg") return -1;
+          if (a.source !== "gutenberg" && b.source === "gutenberg") return 1;
+
+          if (sortBy === "title") return a.title.localeCompare(b.title);
+          if (sortBy === "date") return (b.publishedDate ?? "").localeCompare(a.publishedDate ?? "");
+          if (sortBy === "rating") return (b.rating ?? 0) - (a.rating ?? 0);
+          return 0;
+        });
+
+        setResults(sortedResults);
+        setTotalPages(Math.ceil(totalItems / booksPerPage) || 1);
+      } catch (error) {
+        console.error(`Error fetching ${contentType}:`, error);
+        setResults([]);
+        setTotalPages(1);
+      } finally {
+        setLoading(false);
       }
-    }
-  }
+    };
 
-  return obj;
-}
+    fetchResults();
+  }, [searchQuery, currentPage, activeTab, sources, languages, sortBy, contentType]);
 
-export async function searchOpenLibrary(params: BookSearchParams): Promise<Book[]> {
-  const { query = "", page = 1, limit = 10, subject, sort } = params;
-  const queryParams = new URLSearchParams({
-    q: query || "*:*",
-    page: page.toString(),
-    limit: limit.toString(),
-    has_fulltext: "true",
-    ...(subject && { subject }),
-    ...(sort && { sort }),
-  });
-
-  const url = `${API_ENDPOINTS.OPEN_LIBRARY}?${queryParams.toString()}`;
-  const cacheKey = `openlibrary-${query}-${page}-${limit}-${subject || ""}-${sort || ""}`;
-
-  try {
-    const data = await fetchWithCache(url, cacheKey);
-    const books = (data.docs || []).map((book: any) => ({
-      id: book.key || `openlibrary-${book.cover_i || Math.random().toString(36).slice(2)}`,
-      title: book.title || "Unknown Title",
-      authors: Array.isArray(book.author_name) ? book.author_name : undefined,
-      author: Array.isArray(book.author_name) ? book.author_name[0] : undefined,
-      coverImage: book.cover_i ? `https://covers.openlibrary.org/b/id/${book.cover_i}-M.jpg` : undefined,
-      description: typeof book.description === "string" ? book.description : undefined,
-      publishedDate: book.first_publish_year?.toString(),
-      categories: Array.isArray(book.subject) ? book.subject : undefined,
-      language: Array.isArray(book.language) ? book.language : undefined,
-      pageCount: book.number_of_pages_median,
-      source: "openlibrary" as const,
-      downloadUrl: book.key ? `https://openlibrary.org${book.key}` : undefined,
-      rating: typeof book.rating_average === "number" ? book.rating_average : undefined,
-    }));
-
-    return dedupeBooks(applyContentFilters(books));
-  } catch (error) {
-    console.error("Open Library search failed:", error);
-    return [];
-  }
-}
-
-export async function searchGutenberg(params: BookSearchParams): Promise<Book[]> {
-  const { query = "", page = 1, limit = 10, languages } = params;
-  const queryParams = new URLSearchParams({
-    search: query || "",
-    page: page.toString(),
-    ...(languages?.length && { languages: languages.join(",") }),
-  });
-
-  const url = `${API_ENDPOINTS.GUTENBERG}?${queryParams.toString()}`;
-  const cacheKey = `gutenberg-${query}-${page}-${languages?.join(",") || ""}`;
-
-  try {
-    const data = await fetchWithCache(url, cacheKey);
-    const books = (data.results || []).map((book: any) => ({
-      id: `gutenberg-${book.id}`,
-      title: book.title || "Unknown Title",
-      authors: Array.isArray(book.authors) ? book.authors.map((a: any) => a.name || "Unknown Author") : undefined,
-      author: Array.isArray(book.authors) && book.authors.length ? book.authors[0].name : undefined,
-      coverImage: book.formats?.["image/jpeg"],
-      description: undefined,
-      publishedDate: undefined,
-      categories: Array.isArray(book.subjects) ? book.subjects : undefined,
-      language: Array.isArray(book.languages) ? book.languages : undefined,
-      pageCount: undefined,
-      source: "gutenberg" as const,
-      downloadUrl: book.formats?.["text/html"] || book.formats?.["application/epub+zip"] || book.formats?.["text/plain"],
-      rating: 4.0,
-    })).filter((book: Book) => book.downloadUrl !== undefined);
-
-    return dedupeBooks(applyContentFilters(books));
-  } catch (error) {
-    console.error("Gutenberg search failed:", error);
-    return [];
-  }
-}
-
-export async function searchGoogleBooks(params: BookSearchParams): Promise<Book[]> {
-  const { query = "", page = 1, limit = 10 } = params;
-  const startIndex = (page - 1) * limit;
-  const queryParams = new URLSearchParams({
-    q: query || "free ebooks",
-    startIndex: startIndex.toString(),
-    maxResults: limit.toString(),
-    filter: "free-ebooks",
-  });
-
-  const url = `${API_ENDPOINTS.GOOGLE_BOOKS}?${queryParams.toString()}`;
-  const cacheKey = `google-${query}-${startIndex}-${limit}`;
-
-  try {
-    const data = await fetchWithCache(url, cacheKey);
-    const books = (data.items || []).map((item: any) => {
-      const volumeInfo = item.volumeInfo || {};
-      const accessInfo = item.accessInfo || {};
-      return {
-        id: `google-${item.id}`,
-        title: volumeInfo.title || "Unknown Title",
-        authors: Array.isArray(volumeInfo.authors) ? volumeInfo.authors : undefined,
-        author: Array.isArray(volumeInfo.authors) && volumeInfo.authors.length ? volumeInfo.authors[0] : undefined,
-        coverImage: volumeInfo.imageLinks?.thumbnail,
-        description: volumeInfo.description,
-        publishedDate: volumeInfo.publishedDate,
-        categories: Array.isArray(volumeInfo.categories) ? volumeInfo.categories : undefined,
-        language: volumeInfo.language ? [volumeInfo.language] : undefined,
-        pageCount: volumeInfo.pageCount,
-        source: "google" as const,
-        downloadUrl: accessInfo.epub?.downloadLink || accessInfo.pdf?.downloadLink,
-        rating: typeof volumeInfo.averageRating === "number" ? volumeInfo.averageRating : undefined,
-      };
-    }).filter((book: Book) => book.downloadUrl !== undefined);
-
-    return dedupeBooks(applyContentFilters(books));
-  } catch (error) {
-    console.error("Google Books search failed:", error);
-    return [];
-  }
-}
-
-export async function searchInternetArchive(params: BookSearchParams): Promise<Book[]> {
-  const { query = "", page = 1, limit = 10 } = params;
-  const queryParams = new URLSearchParams({
-    q: query ? `title:(${query}) AND mediatype:texts` : "mediatype:texts",
-    fl: "identifier,title,creator,description,subject,language,year,downloads,avg_rating",
-    sort: "avg_rating desc",
-    output: "json",
-    rows: limit.toString(),
-    page: page.toString(),
-  });
-
-  const url = `${API_ENDPOINTS.INTERNET_ARCHIVE}?${queryParams.toString()}`;
-  const cacheKey = `internetarchive-${query}-${page}-${limit}`;
-
-  try {
-    const data = await fetchWithCache(url, cacheKey);
-    const books = (data.response?.docs || []).map((book: any) => ({
-      id: `internetarchive-${book.identifier}`,
-      title: book.title || "Unknown Title",
-      authors: Array.isArray(book.creator) ? book.creator : book.creator ? [book.creator] : undefined,
-      author: Array.isArray(book.creator) && book.creator.length ? book.creator[0] : book.creator,
-      coverImage: `https://archive.org/services/img/${book.identifier}`,
-      description: book.description,
-      publishedDate: book.year,
-      categories: Array.isArray(book.subject) ? book.subject : book.subject ? [book.subject] : undefined,
-      language: Array.isArray(book.language) ? book.language : book.language ? [book.language] : undefined,
-      pageCount: undefined,
-      source: "internetarchive" as const,
-      downloadUrl: `https://archive.org/details/${book.identifier}`,
-      rating: typeof book.avg_rating === "number" ? book.avg_rating : undefined,
-    }));
-
-    return dedupeBooks(applyContentFilters(books));
-  } catch (error) {
-    console.error("Internet Archive search failed:", error);
-    return [];
-  }
-}
-
-export async function searchLibriVox(params: BookSearchParams): Promise<Book[]> {
-  const { query = "", page = 1, limit = 10 } = params;
-  const queryParams = new URLSearchParams({
-    title: query || "",
-    offset: ((page - 1) * limit).toString(),
-    limit: limit.toString(),
-    format: "json",
-  });
-
-  const url = `${API_ENDPOINTS.LIBRIVOX}?${queryParams.toString()}`;
-  const cacheKey = `librivox-${query}-${page}-${limit}`;
-
-  try {
-    const data = await fetchWithCache(url, cacheKey);
-    const books = (data.books || []).map((book: any) => ({
-      id: `librivox-${book.id}`,
-      title: book.title || "Unknown Title",
-      authors: book.authors?.map((a: any) => `${a.first_name ?? ""} ${a.last_name ?? ""}`.trim()) || undefined,
-      author: book.authors?.[0] ? `${book.authors[0].first_name ?? ""} ${book.authors[0].last_name ?? ""}`.trim() : undefined,
-      coverImage: undefined,
-      description: book.description,
-      publishedDate: book.copyright_year,
-      categories: undefined,
-      language: book.language ? [book.language] : undefined,
-      pageCount: undefined,
-      source: "librivox" as const,
-      downloadUrl: `https://librivox.org/api/feed/audiobooks/${book.id}/rss`,
-      rating: 4.0,
-    }));
-
-    return dedupeBooks(applyContentFilters(books));
-  } catch (error) {
-    console.error("LibriVox search failed:", error);
-    return [];
-  }
-}
-
-export async function searchFeedbooks(params: BookSearchParams): Promise<Book[]> {
-  const { query, limit = 10 } = params;
-  const url = API_ENDPOINTS.FEEDBOOKS;
-  const cacheKey = `feedbooks-all`;
-
-  try {
-    const data = await fetchWithCache(url, cacheKey);
-    const $ = load(data);
-    let books: Book[] = [];
-
-    $("entry").each((_, element) => {
-      const $element = $(element);
-      const title = $element.find("title").text().trim();
-      const author = $element.find("author name").text().trim();
-      const description = $element.find("summary").text().trim();
-      const id = $element.find("id").text().trim();
-      const coverUrl = $element.find('link[rel="http://opds-spec.org/image"]').attr("href");
-      const downloadUrl = $element.find('link[rel="http://opds-spec.org/acquisition"]').attr("href");
-
-      const categories: string[] = [];
-      $element.find("category").each((_, catElement) => {
-        categories.push($(catElement).attr("term") || "");
-      });
-
-      books.push({
-        id: `feedbooks-${id.split("/").pop() || Math.random().toString(36).slice(2)}`,
-        title: title || "Unknown Title",
-        authors: author ? [author] : undefined,
-        author,
-        coverImage: coverUrl,
-        description,
-        publishedDate: undefined,
-        categories: categories.length ? categories : undefined,
-        language: ["English"],
-        pageCount: undefined,
-        source: "feedbooks",
-        downloadUrl,
-        rating: 4.0,
-      });
-    });
-
-    books = books.filter((book) => book.downloadUrl !== undefined);
-    if (query) {
-      const queryLower = query.toLowerCase();
-      books = books.filter(
-        (book) =>
-          book.title.toLowerCase().includes(queryLower) ||
-          book.description?.toLowerCase().includes(queryLower) ||
-          book.authors?.some((author) => author.toLowerCase().includes(queryLower))
-      );
-    }
-
-    return dedupeBooks(applyContentFilters(books.slice(0, limit)));
-  } catch (error) {
-    console.error("Feedbooks search failed:", error);
-    return [];
-  }
-}
-
-export async function searchBooks(
-  params: BookSearchParams & { sources?: BookSource[] }
-): Promise<{ books: Book[]; totalItems: number }> {
-  const sources = params.sources || ["openlibrary", "gutenberg", "google"];
-  const searchFunctions: { [key: string]: (p: BookSearchParams) => Promise<Book[]> } = {
-    openlibrary: searchOpenLibrary,
-    gutenberg: searchGutenberg,
-    google: searchGoogleBooks,
-    internetarchive: searchInternetArchive,
-    librivox: searchLibriVox,
-    feedbooks: searchFeedbooks,
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCurrentPage(1);
   };
 
-  try {
-    const promises = sources.map((source) => searchFunctions[source](params));
-    const results = await Promise.allSettled(promises);
-
-    let allBooks: Book[] = [];
-    let totalItems = 0;
-
-    results.forEach((result, index) => {
-      if (result.status === "fulfilled") {
-        allBooks = [...allBooks, ...result.value];
-        totalItems += {
-          openlibrary: 10000,
-          gutenberg: 60000,
-          google: 1000,
-          internetarchive: 20000,
-          librivox: 15000,
-          feedbooks: 5000,
-        }[sources[index]] || 0;
-      } else {
-        console.warn(`Search failed for source ${sources[index]}:`, result.reason);
-      }
+  const handleSourceChange = (source: SourceType, checked: boolean) => {
+    setSources((prev) => {
+      const next = checked ? [...prev, source] : prev.filter((s) => s !== source);
+      return next.length > 0 ? next : prev;
     });
-
-    const uniqueBooks = dedupeBooks(allBooks);
-    uniqueBooks.sort((a, b) => {
-      const ratingA = a.rating ?? 0;
-      const ratingB = b.rating ?? 0;
-      if (ratingB !== ratingA) return ratingB - ratingA;
-      return a.title.localeCompare(b.title);
-    });
-
-    return {
-      books: uniqueBooks,
-      totalItems: uniqueBooks.length || totalItems,
-    };
-  } catch (error) {
-    console.error("Multi-source search failed:", error);
-    return { books: [], totalItems: 0 };
-  }
-}
-
-export async function getBookById(id: string): Promise<Book | null> {
-  const sourceMap: { [key: string]: () => Promise<Book | null> } = {
-    "gutenberg-": async () => {
-      const gutenbergId = id.replace("gutenberg-", "");
-      const url = `${API_ENDPOINTS.GUTENBERG}/${gutenbergId}`;
-      const data = await fetchWithCache(url, `gutenberg-book-${gutenbergId}`);
-      if (!data) return null;
-      return {
-        id,
-        title: data.title || "Unknown Title",
-        authors: data.authors?.map((a: any) => a.name || "Unknown Author"),
-        author: data.authors?.[0]?.name,
-        coverImage: data.formats?.["image/jpeg"],
-        description: undefined,
-        publishedDate: undefined,
-        categories: data.subjects,
-        language: data.languages,
-        pageCount: undefined,
-        source: "gutenberg",
-        downloadUrl: data.formats?.["text/html"] || data.formats?.["application/epub+zip"] || data.formats?.["text/plain"],
-        rating: 4.0,
-      };
-    },
-    "google-": async () => {
-      const googleId = id.replace("google-", "");
-      const url = `${API_ENDPOINTS.GOOGLE_BOOKS}/${googleId}`;
-      const data = await fetchWithCache(url, `google-book-${googleId}`);
-      if (!data) return null;
-      const volumeInfo = data.volumeInfo || {};
-      const accessInfo = data.accessInfo || {};
-      return {
-        id,
-        title: volumeInfo.title || "Unknown Title",
-        authors: volumeInfo.authors,
-        author: volumeInfo.authors?.[0],
-        coverImage: volumeInfo.imageLinks?.thumbnail,
-        description: volumeInfo.description,
-        publishedDate: volumeInfo.publishedDate,
-        categories: volumeInfo.categories,
-        language: volumeInfo.language ? [volumeInfo.language] : undefined,
-        pageCount: volumeInfo.pageCount,
-        source: "google",
-        downloadUrl: accessInfo.epub?.downloadLink || accessInfo.pdf?.downloadLink,
-        rating: volumeInfo.averageRating,
-      };
-    },
-    "internetarchive-": async () => {
-      const archiveId = id.replace("internetarchive-", "");
-      const url = `https://archive.org/metadata/${archiveId}`;
-      const data = await fetchWithCache(url, `internetarchive-book-${archiveId}`);
-      if (!data) return null;
-      const metadata = data.metadata || {};
-      return {
-        id,
-        title: metadata.title || "Unknown Title",
-        authors: metadata.creator ? (Array.isArray(metadata.creator) ? metadata.creator : [metadata.creator]) : undefined,
-        author: metadata.creator ? (Array.isArray(metadata.creator) ? metadata.creator[0] : metadata.creator) : undefined,
-        coverImage: `https://archive.org/services/img/${archiveId}`,
-        description: metadata.description,
-        publishedDate: metadata.year,
-        categories: metadata.subject ? (Array.isArray(metadata.subject) ? metadata.subject : [metadata.subject]) : undefined,
-        language: metadata.language ? (Array.isArray(metadata.language) ? metadata.language : [metadata.language]) : undefined,
-        pageCount: undefined,
-        source: "internetarchive",
-        downloadUrl: `https://archive.org/download/${archiveId}/${archiveId}.pdf`,
-        rating: metadata.avg_rating,
-      };
-    },
-    "librivox-": async () => {
-      const librivoxId = id.replace("librivox-", "");
-      const url = `${API_ENDPOINTS.LIBRIVOX}?id=${librivoxId}&format=json`;
-      const data = await fetchWithCache(url, `librivox-book-${librivoxId}`);
-      if (!data) return null;
-      const book = data.books?.[0] || {};
-      return {
-        id,
-        title: book.title || "Unknown Title",
-        authors: book.authors?.map((a: any) => `${a.first_name ?? ""} ${a.last_name ?? ""}`.trim()),
-        author: book.authors?.[0] ? `${book.authors[0].first_name ?? ""} ${book.authors[0].last_name ?? ""}`.trim() : undefined,
-        coverImage: undefined,
-        description: book.description,
-        publishedDate: book.copyright_year,
-        categories: undefined,
-        language: book.language ? [book.language] : undefined,
-        pageCount: undefined,
-        source: "librivox",
-        downloadUrl: `https://librivox.org/rss/${librivoxId}`,
-        rating: 4.0,
-      };
-    },
-    "feedbooks-": async () => {
-      const feedbooksId = id.replace("feedbooks-", "");
-      const url = `${API_ENDPOINTS.FEEDBOOKS}`;
-      const data = await fetchWithCache(url, `feedbooks-book-${feedbooksId}`);
-      if (!data) return null;
-      const $ = load(data);
-      const entry = $("entry").filter((_, e) => $(e).find("id").text().includes(feedbooksId)).first();
-      if (!entry.length) return null;
-      const title = entry.find("title").text().trim();
-      const author = entry.find("author name").text().trim();
-      const description = entry.find("summary").text().trim();
-      const coverUrl = entry.find('link[rel="http://opds-spec.org/image"]').attr("href");
-      const downloadUrl = entry.find('link[rel="http://opds-spec.org/acquisition"]').attr("href");
-      const categories: string[] = [];
-      entry.find("category").each((_, catElement) => {
-        categories.push($(catElement).attr("term") || "");
-      });
-      return {
-        id,
-        title: title || "Unknown Title",
-        authors: author ? [author] : undefined,
-        author,
-        coverImage: coverUrl,
-        description,
-        publishedDate: undefined,
-        categories: categories.length ? categories : undefined,
-        language: ["English"],
-        pageCount: undefined,
-        source: "feedbooks",
-        downloadUrl,
-        rating: 4.0,
-      };
-    },
-    "": async () => {
-      const url = `https://openlibrary.org/works/${id}.json`;
-      const data = await fetchWithCache(url, `openlibrary-book-${id}`);
-      if (!data) return null;
-      const coverImage = data.covers?.[0] ? `https://covers.openlibrary.org/b/id/${data.covers[0]}-M.jpg` : undefined;
-      return {
-        id,
-        title: data.title || "Unknown Title",
-        authors: data.authors?.map((a: any) => a.name || "Unknown Author"),
-        author: data.authors?.[0]?.name,
-        coverImage,
-        description: typeof data.description === "object" ? data.description.value : data.description,
-        publishedDate: data.first_publish_date,
-        categories: data.subjects,
-        language: undefined,
-        pageCount: undefined,
-        source: "openlibrary",
-        downloadUrl: data.key ? `https://openlibrary.org${data.key}` : undefined,
-        rating: undefined,
-      };
-    },
+    setCurrentPage(1);
   };
 
-  try {
-    const sourcePrefix = Object.keys(sourceMap).find((prefix) => id.startsWith(prefix));
-    const sourceFn = sourcePrefix !== undefined ? sourceMap[sourcePrefix] : sourceMap[""];
-    const book = await sourceFn();
-
-    if (!book || !book.downloadUrl) return null;
-
-    const filteredBooks = applyContentFilters([book]);
-    return filteredBooks.length > 0 ? filteredBooks[0] : null;
-  } catch (error) {
-    console.error(`Failed to fetch book with ID ${id}:`, error);
-    return null;
-  }
-}
-
-export async function getBookContent(id: string): Promise<string | null> {
-  try {
-    const book = await getBookById(id);
-    if (!book || (!book.downloadUrl && !book.pdfUrl)) {
-      console.error(`No download URL or PDF URL found for book ID: ${id}`);
-      return null;
-    }
-
-    const url = book.downloadUrl || book.pdfUrl;
-    const cacheKey = `book-content-${id}`;
-    const cachedContent = cache.get(cacheKey);
-    const now = Date.now();
-
-    if (cachedContent && now - cachedContent.timestamp < CACHE_TTL) {
-      return cachedContent.data as string;
-    }
-
-    const response = await fetch(url!, { cache: "no-store" });
-    if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status} for URL: ${url}`);
-    }
-
-    let content: string;
-    const contentType = response.headers.get("content-type") || "";
-
-    if (contentType.includes("text/plain")) {
-      content = await response.text();
-    } else if (contentType.includes("application/epub+zip")) {
-      await response.arrayBuffer();
-      content = "EPUB content not directly readable as text. Consider using a library like epub.js.";
-    } else if (contentType.includes("text/html")) {
-      const text = await response.text();
-      const $ = load(text);
-      content = $("body").text().trim() || "No readable text found in HTML.";
-    } else if (contentType.includes("application/pdf")) {
-      content = "PDF content not directly readable as text. Use a PDF parser library.";
-    } else {
-      content = await response.text();
-    }
-
-    cache.set(cacheKey, { data: content, timestamp: now });
-    return content;
-  } catch (error) {
-    console.error(`Error fetching content for book ID ${id}:`, error);
-    return null;
-  }
-}
-
-export async function getRecommendedBooks(id: string, limit: number = 5): Promise<Book[]> {
-  try {
-    const book = await getBookById(id);
-    if (!book) return [];
-
-    const searchParams: BookSearchParams = { limit };
-    if (book.authors?.length) {
-      searchParams.query = book.authors[0];
-    } else if (book.author) {
-      searchParams.query = book.author;
-    } else if (book.categories?.length) {
-      searchParams.subject = book.categories[0];
-    } else {
-      const titleWords = book.title.split(" ").filter((word) => word.length > 4).slice(0, 2);
-      searchParams.query = titleWords.length ? titleWords.join(" ") : "classic literature";
-    }
-
-    const { books } = await searchBooks({
-      ...searchParams,
-      sources: ["openlibrary", "gutenberg", "google"],
-    });
-
-    return books.filter((rec) => rec.id !== id).slice(0, limit);
-  } catch (error) {
-    console.error("Failed to get book recommendations:", error);
-    return [];
-  }
-}
-
-export async function getTrendingBooks(limit: number = 10, category?: string): Promise<Book[]> {
-  try {
-    const sources: BookSource[] = ["openlibrary", "gutenberg"];
-    const params: BookSearchParams = {
-      limit: Math.ceil(limit / sources.length) + 5,
-      subject: category,
-      sort: "rating",
-    };
-
-    const promises = sources.map(async (source) => {
-      switch (source) {
-        case "openlibrary":
-          return searchOpenLibrary(params);
-        case "gutenberg":
-          return searchGutenberg({ ...params, query: category || "popular" });
-        default:
-          return [];
-      }
-    });
-
-    const results = await Promise.allSettled(promises);
-
-    let allBooks: Book[] = [];
-    results.forEach((result) => {
-      if (result.status === "fulfilled") {
-        allBooks = [...allBooks, ...result.value];
-      }
-    });
-
-    const uniqueBooks = dedupeBooks(allBooks);
-    uniqueBooks.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-    return uniqueBooks.slice(0, limit);
-  } catch (error) {
-    console.error("Failed to get trending books:", error);
-    return [];
-  }
-}
-
-export async function getFeaturedBooks(limit: number = 4): Promise<Book[]> {
-  return getTrendingBooks(limit);
-}
-
-export async function getNewReleases(limit: number = 10, daysBack: number = 30): Promise<Book[]> {
-  try {
-    const sources: BookSource[] = ["openlibrary"];
-    const params: BookSearchParams = {
-      limit: Math.ceil(limit / sources.length) + 3,
-      sort: "date",
-    };
-
-    const promises = sources.map(async () => searchOpenLibrary({ ...params, query: "recent" }));
-    const results = await Promise.allSettled(promises);
-
-    let allBooks: Book[] = [];
-    results.forEach((result) => {
-      if (result.status === "fulfilled") {
-        allBooks = [...allBooks, ...result.value];
-      }
-    });
-
-    const cutoffDate = new Date();
-    cutoffDate.setDate(cutoffDate.getDate() - daysBack);
-
-    const newBooks = allBooks.filter((book) => {
-      if (!book.publishedDate) return true;
-      const publishDate = new Date(book.publishedDate);
-      return !isNaN(publishDate.getTime()) && publishDate >= cutoffDate;
-    });
-
-    return newBooks.length < limit ? allBooks.slice(0, limit) : newBooks.slice(0, limit);
-  } catch (error) {
-    console.error("Failed to get new releases:", error);
-    return [];
-  }
-}
-
-export async function getBooksByAuthor(authorName: string, limit: number = 10): Promise<Book[]> {
-  try {
-    const params: BookSearchParams = {
-      query: authorName,
-      limit,
-      sort: "relevance",
-    };
-
-    const { books } = await searchBooks({
-      ...params,
-      sources: ["openlibrary", "gutenberg", "google"],
-    });
-
-    const authorNameLower = authorName.toLowerCase();
-    const filteredBooks = books.filter(
-      (book) =>
-        (book.authors?.some((author) => author.toLowerCase().includes(authorNameLower)) ||
-          book.author?.toLowerCase().includes(authorNameLower)) ?? false
-    );
-
-    return filteredBooks.slice(0, limit);
-  } catch (error) {
-    console.error(`Failed to get books by author ${authorName}:`, error);
-    return [];
-  }
-}
-
-export function clearCache(cacheKey?: string): void {
-  if (cacheKey) {
-    cache.delete(cacheKey);
-  } else {
-    cache.clear();
-  }
-}
-
-export function getCacheStats(): { size: number; keys: string[] } {
-  return {
-    size: cache.size,
-    keys: Array.from(cache.keys()),
+  const handleLanguageChange = (language: string, checked: boolean) => {
+    setLanguages((prev) => (checked ? [...prev, language] : prev.filter((l) => l !== language)));
+    setCurrentPage(1);
   };
+
+  const handleContentTypeChange = (nextType: ContentType) => {
+    setContentType(nextType);
+    setSources(getDefaultSources(nextType));
+    setLanguages([]);
+    setCurrentPage(1);
+  };
+
+  const paginatedResults = results.slice((currentPage - 1) * booksPerPage, currentPage * booksPerPage);
+  const hasSearchTerm = searchQuery.trim().length > 0;
+
+  return (
+    <div className="min-h-screen flex flex-col">
+      <MainNav />
+      <div className="flex-1 max-w-7xl mx-auto py-8 px-4 md:px-6">
+        <div className="flex justify-between items-center mb-6 gap-4">
+          <div>
+            <h1 className="text-3xl font-bold">Discover</h1>
+            <p className="text-sm text-muted-foreground mt-1">
+              {contentType === "books"
+                ? "Browse books across multiple public libraries"
+                : contentType === "papers"
+                  ? "Search research papers and scholarly sources"
+                  : "Explore light novels and serialized fiction"}
+            </p>
+          </div>
+
+          <Select value={contentType} onValueChange={(value) => handleContentTypeChange(value as ContentType)}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Content Type" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="books">Books</SelectItem>
+              <SelectItem value="papers">Research Papers</SelectItem>
+              <SelectItem value="novels">Light Novels</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 mb-6">
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Sort by" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="relevance">Relevance</SelectItem>
+              <SelectItem value="title">Title</SelectItem>
+              <SelectItem value="date">Publication Date</SelectItem>
+              <SelectItem value="rating">Rating</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Sheet>
+            <SheetTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="Filter results">
+                <Filter className="h-4 w-4" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent>
+              <SheetHeader>
+                <SheetTitle>Filter {contentType.charAt(0).toUpperCase() + contentType.slice(1)}</SheetTitle>
+                <SheetDescription>Refine your search with these filters</SheetDescription>
+              </SheetHeader>
+
+              <div className="py-4">
+                <h3 className="font-medium mb-2">Sources</h3>
+                <div className="space-y-2">
+                  {contentType === "books" &&
+                    BOOK_SOURCES.map((source) => (
+                      <div key={source} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`source-${source}`}
+                          checked={sources.includes(source)}
+                          onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
+                        />
+                        <Label htmlFor={`source-${source}`}>
+                          {source === "openlibrary"
+                            ? "Open Library"
+                            : source === "gutenberg"
+                              ? "Project Gutenberg"
+                              : source === "google"
+                                ? "Google Books"
+                                : source === "internetarchive"
+                                  ? "Internet Archive"
+                                  : source === "librivox"
+                                    ? "LibriVox"
+                                    : "Feedbooks"}
+                        </Label>
+                      </div>
+                    ))}
+
+                  {contentType === "papers" &&
+                    PAPER_SOURCES.map((source) => (
+                      <div key={source} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`source-${source}`}
+                          checked={sources.includes(source)}
+                          onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
+                        />
+                        <Label htmlFor={`source-${source}`}>{source === "arxiv" ? "arXiv" : "Semantic Scholar"}</Label>
+                      </div>
+                    ))}
+
+                  {contentType === "novels" &&
+                    NOVEL_SOURCES.map((source) => (
+                      <div key={source} className="flex items-center space-x-2">
+                        <Checkbox
+                          id={`source-${source}`}
+                          checked={sources.includes(source)}
+                          onCheckedChange={(checked) => handleSourceChange(source, checked as boolean)}
+                        />
+                        <Label htmlFor={`source-${source}`}>
+                          {source === "lnmtl" ? "LNMTL" : source === "royalroad" ? "Royal Road" : "Webnovel"}
+                        </Label>
+                      </div>
+                    ))}
+                </div>
+
+                {contentType === "books" && (
+                  <>
+                    <Separator className="my-4" />
+                    <h3 className="font-medium mb-2">Languages</h3>
+                    <div className="space-y-2">
+                      {['en', 'fr', 'es', 'de'].map((lang) => (
+                        <div key={lang} className="flex items-center space-x-2">
+                          <Checkbox
+                            id={`lang-${lang}`}
+                            checked={languages.includes(lang)}
+                            onCheckedChange={(checked) => handleLanguageChange(lang, checked as boolean)}
+                          />
+                          <Label htmlFor={`lang-${lang}`}>
+                            {lang === "en" ? "English" : lang === "fr" ? "French" : lang === "es" ? "Spanish" : "German"}
+                          </Label>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="flex justify-end">
+                <Button
+                  onClick={() => {
+                    setSources(getDefaultSources(contentType));
+                    setLanguages([]);
+                    setCurrentPage(1);
+                  }}
+                >
+                  Reset Filters
+                </Button>
+              </div>
+            </SheetContent>
+          </Sheet>
+        </div>
+
+        {contentType === "books" && (
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
+            <TabsList className="grid grid-cols-5 sm:w-[600px]">
+              <TabsTrigger value="all">All</TabsTrigger>
+              <TabsTrigger value="fiction">Fiction</TabsTrigger>
+              <TabsTrigger value="nonfiction">Non-Fiction</TabsTrigger>
+              <TabsTrigger value="science">Science</TabsTrigger>
+              <TabsTrigger value="history">History</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
+
+        <form onSubmit={handleSearch} className="relative mb-8">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground h-4 w-4" />
+          <Input
+            placeholder={`Search ${contentType} by title, author, or keyword...`}
+            className="pl-10 h-12"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </form>
+
+        {loading ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 justify-center">
+            {Array.from({ length: 10 }).map((_, index) => (
+              <div key={index} className="animate-pulse rounded-lg overflow-hidden shadow-sm bg-card">
+                <div className="aspect-[2/3] bg-muted" />
+                <div className="p-4 space-y-2">
+                  <div className="h-4 bg-muted rounded" />
+                  <div className="h-3 w-2/3 bg-muted rounded" />
+                  <div className="h-3 w-1/2 bg-muted rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : paginatedResults.length > 0 ? (
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-6 justify-center">
+            {paginatedResults.map((item) => (
+              <BookCard key={item.id} book={item} />
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-20">
+            <p className="text-muted-foreground">
+              {hasSearchTerm
+                ? `No ${contentType} found for “${searchQuery}”. Try adjusting your filters or search terms.`
+                : `No ${contentType} found. Try enabling more sources or a broader search.`}
+            </p>
+          </div>
+        )}
+
+        {!loading && results.length > 0 && (
+          <div className="flex justify-center mt-10">
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+              >
+                Previous
+              </Button>
+
+              {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                let pageNum = i + 1;
+                if (currentPage > 3 && totalPages > 5) {
+                  pageNum = currentPage - 2 + i;
+                  if (pageNum > totalPages) pageNum = totalPages - (4 - i);
+                }
+
+                return (
+                  <Button
+                    key={`${pageNum}-${i}`}
+                    variant="outline"
+                    size="sm"
+                    className={pageNum === currentPage ? "bg-primary text-primary-foreground" : ""}
+                    onClick={() => setCurrentPage(pageNum)}
+                  >
+                    {pageNum}
+                  </Button>
+                );
+              })}
+
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
-export { API_ENDPOINTS };
+function BookCard({ book }: { book: ExtendedBook }) {
+  const getSourceBadge = (source: string) => {
+    switch (source) {
+      case "openlibrary":
+        return "Open Library";
+      case "gutenberg":
+        return "Gutenberg";
+      case "google":
+        return "Google Books";
+      case "internetarchive":
+        return "Internet Archive";
+      case "librivox":
+        return "LibriVox";
+      case "feedbooks":
+        return "Feedbooks";
+      case "arxiv":
+        return "arXiv";
+      case "semanticscholar":
+        return "Semantic Scholar";
+      case "lnmtl":
+        return "LNMTL";
+      case "royalroad":
+        return "Royal Road";
+      case "webnovel":
+        return "Webnovel";
+      default:
+        return source;
+    }
+  };
+
+  return (
+    <div className="bg-card rounded-lg overflow-hidden shadow-sm transition-transform duration-300 hover:scale-[1.02] hover:shadow-md">
+      <div className="aspect-[2/3] bg-muted relative">
+        {book.coverImage ? (
+          <img src={book.coverImage} alt={`Cover of ${book.title}`} className="object-cover w-full h-full" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center bg-muted">
+            <BookOpen className="h-12 w-12 text-muted-foreground opacity-30" />
+          </div>
+        )}
+        <div className="absolute top-2 right-2">
+          <span className="bg-primary/80 text-primary-foreground text-xs px-2 py-1 rounded-full">
+            {getSourceBadge(book.source)}
+          </span>
+        </div>
+      </div>
+
+      <div className="p-4">
+        <h3 className="font-semibold mb-1 line-clamp-1">{book.title}</h3>
+        <p className="text-sm text-muted-foreground mb-2 line-clamp-1">
+          {book.authors && book.authors.length > 0 ? book.authors.join(", ") : "Unknown Author"}
+        </p>
+
+        {['arxiv', 'semanticscholar'].includes(book.source) ? (
+          <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+            {book.abstract || "No abstract available"}
+          </p>
+        ) : ['lnmtl', 'royalroad', 'webnovel'].includes(book.source) ? (
+          <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+            {book.description || "No description available"}
+          </p>
+        ) : (
+          <div className="flex justify-between items-center">
+            <span className="text-sm">{book.rating && book.rating > 0 ? `${book.rating.toFixed(1)} ★` : "No rating"}</span>
+          </div>
+        )}
+
+        <Button variant="ghost" size="sm" asChild className="mt-2">
+          <Link href={`/reader/${book.id}`}>
+            <BookOpen className="h-4 w-4 mr-1" />
+            Read
+          </Link>
+        </Button>
+      </div>
+    </div>
+  );
+}
 

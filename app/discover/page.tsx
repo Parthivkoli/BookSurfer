@@ -94,13 +94,13 @@ export default function DiscoverPage() {
         let totalItems = 0;
 
         if (contentType === "books") {
-          const bookSources = sources.filter((s) => BOOK_SOURCES.includes(s as any)) as BookSearchParams["sources"];
-          if (bookSources.length > 0) {
+          const bookSources = sources.filter((s) => BOOK_SOURCES.includes(s as any)) as (typeof BOOK_SOURCES)[number][];
+          if (bookSources && bookSources.length > 0) {
             const params: BookSearchParams = {
               query: searchQuery,
               page: currentPage,
               limit: booksPerPage,
-              sources: bookSources,
+              sources: bookSources as BookSearchParams["sources"],
             };
 
             if (activeTab !== "all") params.subject = activeTab;
@@ -130,10 +130,10 @@ export default function DiscoverPage() {
 
           const novelResults = await Promise.all(novelPromises);
           allResults = novelResults.flat().map((novel) => {
-            const lightNovel = novel as { genre?: string; url?: string; chapters?: number };
+            const lightNovel = novel as { genre?: string; url?: string; chapters?: number; author?: string };
             return {
               ...novel,
-              authors: ["Unknown Author"],
+              authors: [lightNovel.author || "Unknown Author"],
               description: lightNovel.genre ? `Genre: ${lightNovel.genre}` : undefined,
               coverImage: undefined,
               publishedDate: undefined,
@@ -392,7 +392,7 @@ export default function DiscoverPage() {
           <div className="text-center py-20">
             <p className="text-muted-foreground">
               {hasSearchTerm
-                ? `No ${contentType} found for “${searchQuery}”. Try adjusting your filters or search terms.`
+                ? `No ${contentType} found for "${searchQuery}". Try adjusting your filters or search terms.`
                 : `No ${contentType} found. Try enabling more sources or a broader search.`}
             </p>
           </div>
@@ -523,4 +523,3 @@ function BookCard({ book }: { book: ExtendedBook }) {
     </div>
   );
 }
-
